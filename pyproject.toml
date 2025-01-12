@@ -1,0 +1,31 @@
+[project]
+name = "audio2anki"
+version = "0.1.0"
+description = "Convert audio and video files into Anki flashcard decks with translations"
+authors = [{ name = "Oliver Steele", email = "steele@osteele.com" }]
+dependencies = [
+    "click>=8.1.7",
+    "rich>=13.7.0",
+    "openai>=1.6.0",
+    "openai-whisper>=20231117",
+    "pydub>=0.25.1",
+]
+requires-python = ">=3.10"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = ["black>=23.12.1", "mypy>=1.8.0", "ruff>=0.1.9", "pytest>=7.4.4"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.black]
+line-length = 120
+target-version = ["py310"]
+
+[project.scripts]
+audio2anki = "audio2anki.cli:main"
