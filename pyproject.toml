@@ -7,7 +7,6 @@ dependencies = [
     "click>=8.1.7",
     "rich>=13.7.0",
     "openai>=1.6.0",
-    "openai-whisper>=20231117",
     "pydub>=0.25.1",
 ]
 requires-python = ">=3.10"

@@ -18,6 +18,11 @@ Convert audio and video files into Anki flashcard decks with translations.
 - 📝 Optional manual transcript input
 - 🎴 Anki-ready output with embedded audio
 
+## Requirements
+
+- Python 3.10 or later
+- OpenAI API key (set as `OPENAI_API_KEY` environment variable)
+
 ## Installation
 
 ```bash
@@ -31,11 +36,13 @@ uv pip install -e .
 
 Create an Anki deck from an audio file:
 ```bash
+export OPENAI_API_KEY=your-api-key-here
 audio2anki audio.mp3
 ```
 
 Use an existing transcript:
 ```bash
+export OPENAI_API_KEY=your-api-key-here
 audio2anki audio.mp3 --transcript transcript.txt
 ```
 

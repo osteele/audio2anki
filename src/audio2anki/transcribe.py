@@ -1,96 +1,86 @@
-"""Transcription module using OpenAI Whisper."""
+"""Transcription module using OpenAI API."""
 
 import os
 from pathlib import Path
 from typing import Any
 
-import whisper
-from rich.progress import Progress
+from openai import OpenAI
+from rich.progress import Progress, TaskID
 
-from .cli import AudioSegment
+from .models import AudioSegment
 
 
 def load_transcript(file: Path) -> list[AudioSegment]:
-    """Load segments from a transcript file."""
+    """Load transcript from file."""
     segments = []
-    current_segment = None
-    
-    with open(file, encoding="utf-8") as f:
+    with open(file) as f:
         for line in f:
-            line = line.strip()
-            if not line:
-                if current_segment:
-                    segments.append(current_segment)
-                    current_segment = None
-            elif current_segment is None:
-                current_segment = AudioSegment(start=0.0, end=0.0, text=line)
-            else:
-                current_segment.text += " " + line
-    
-    if current_segment:
-        segments.append(current_segment)
-    
+            parts = line.strip().split("\t")
+            if len(parts) >= 3:
+                start, end, text = float(parts[0]), float(parts[1]), parts[2]
+                segments.append(AudioSegment(start=start, end=end, text=text))
     return segments
 
 
 def transcribe_audio(
-    audio_path: Path,
+    audio_file: Path,
     transcript_path: Path | None,
-    *,
-    model: str = "small",
+    model: str,
     language: str | None = None,
-    min_length: float = 1.0,
-    max_length: float = 15.0,
+    min_length: float | None = None,
+    max_length: float | None = None,
 ) -> list[AudioSegment]:
-    """Transcribe audio using Whisper."""
-    if transcript_path:
-        return load_transcript(transcript_path)
+    """Transcribe audio using OpenAI Whisper API.
     
-    # Load Whisper model
-    whisper_model = whisper.load_model(model)
-    
-    # Transcribe
-    result = whisper_model.transcribe(
-        str(audio_path),
-        language=language,
-        task="transcribe",
-        verbose=False,
-    )
-    
-    # Convert segments
-    segments: list[AudioSegment] = []
-    current_segment = None
-    
-    for seg in result["segments"]:
-        start: float = seg["start"]
-        end: float = seg["end"]
-        text: str = seg["text"].strip()
-        
-        # Skip empty segments
-        if not text:
+    Args:
+        audio_file: Path to audio file
+        transcript_path: Path to transcript file (optional)
+        model: Whisper model to use (e.g. "whisper-1")
+        language: Language code (e.g. "en", "zh", "ja")
+        min_length: Minimum segment length in seconds
+        max_length: Maximum segment length in seconds
+    """
+    if transcript_path and transcript_path.exists():
+        segments = load_transcript(transcript_path)
+    else:
+        # Check for API key
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY environment variable not set")
+
+        # Initialize OpenAI client
+        client = OpenAI()
+
+        # Open audio file
+        with open(audio_file, "rb") as f:
+            try:
+                # Transcribe using OpenAI API
+                response = client.audio.transcriptions.create(
+                    file=f,
+                    model=model,
+                    language=language,
+                    response_format="verbose_json",
+                    timestamp_granularities=["segment"],
+                )
+            except Exception as e:
+                raise RuntimeError(f"Transcription failed: {str(e)}")
+
+        # Convert to segments
+        segments = []
+        for segment in response.segments:
+            start = float(segment.start)
+            end = float(segment.end)
+            text = segment.text.strip()
+            segments.append(AudioSegment(start=start, end=end, text=text))
+
+    # Filter by length
+    filtered_segments = []
+    for segment in segments:
+        duration = segment.end - segment.start
+        if min_length is not None and duration <= min_length:
             continue
-        
-        # Merge short segments
-        if current_segment and (start - current_segment.end) < 0.3:
-            duration = end - current_segment.start
-            if duration <= max_length:
-                current_segment.end = end
-                current_segment.text += " " + text
-                continue
-        
-        # Add completed segment
-        if current_segment:
-            segments.append(current_segment)
-        
-        # Start new segment
-        current_segment = AudioSegment(
-            start=start,
-            end=end,
-            text=text,
-        )
-    
-    # Add final segment
-    if current_segment:
-        segments.append(current_segment)
-    
-    return segments
+        if max_length is not None and duration > max_length:
+            continue
+        filtered_segments.append(segment)
+
+    return filtered_segments
