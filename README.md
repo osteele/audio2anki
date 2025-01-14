@@ -46,6 +46,23 @@ export OPENAI_API_KEY=your-api-key-here
 audio2anki audio.mp3 --transcript transcript.txt
 ```
 
+### Common Use Cases
+
+Process a noisy recording with more aggressive silence removal:
+```bash
+audio2anki audio.mp3 --silence-thresh -30
+```
+
+Process a quiet recording or preserve more background sounds:
+```bash
+audio2anki audio.mp3 --silence-thresh -50
+```
+
+Process a podcast with custom segment lengths and silence detection:
+```bash
+audio2anki podcast.mp3 --min-length 2.0 --max-length 20.0 --silence-thresh -35
+```
+
 ### Command Line Options
 
 ```bash
@@ -59,6 +76,7 @@ Options:
   --min-length SEC   Minimum segment length (default: 1.0)
   --max-length SEC   Maximum segment length (default: 15.0)
   --language LANG    Source language (default: auto-detect)
+  --silence-thresh DB Silence threshold (default: -40)
 ```
 
 ### Output

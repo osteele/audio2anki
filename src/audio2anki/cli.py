@@ -32,6 +32,7 @@ def process_audio(
     language: str | None,
     min_length: float,
     max_length: float,
+    silence_thresh: int,
     debug: bool,
 ) -> list[AudioSegment]:
     """Process audio file and return segments with translations."""
@@ -63,7 +64,14 @@ def process_audio(
         
         # Step 3: Split audio
         task_id = progress.add_task("Splitting audio...", total=len(segments))
-        audio_segments = split_audio(input_file, segments, output_dir, task_id, progress)
+        audio_segments = split_audio(
+            input_file,
+            segments,
+            output_dir,
+            task_id,
+            progress,
+            silence_thresh=silence_thresh,
+        )
         
         if debug:
             debug_file = output_dir / "debug.txt"
@@ -99,7 +107,8 @@ def process_audio(
 )
 @click.option(
     "--language",
-    help="Source language (auto-detect if not specified)",
+    type=str,
+    help="Source language (if not specified, will be auto-detected)",
 )
 @click.option(
     "--min-length",
@@ -110,22 +119,25 @@ def process_audio(
 @click.option(
     "--max-length",
     type=float,
-    default=15.0,
+    default=10.0,
     help="Maximum segment length in seconds",
 )
 @click.option(
-    "--debug",
-    is_flag=True,
-    help="Generate debug information",
+    "--silence-thresh",
+    type=int,
+    default=-40,
+    help="Silence threshold in dB. Higher values mean more aggressive silence detection",
 )
+@click.option("--debug/--no-debug", default=False, help="Enable debug output")
 def main(
     input_file: Path,
-    transcript: Optional[Path],
+    transcript: Path | None,
     output: Path,
     model: str,
-    language: Optional[str],
+    language: str | None,
     min_length: float,
     max_length: float,
+    silence_thresh: int,
     debug: bool,
 ) -> None:
     """Convert audio files to Anki flashcards with translations.
@@ -142,6 +154,7 @@ def main(
             language,
             min_length,
             max_length,
+            silence_thresh,
             debug,
         )
         
