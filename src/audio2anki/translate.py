@@ -1,62 +1,61 @@
-"""Translation module using OpenAI."""
+"""Translation module using OpenAI API."""
 
 import os
-from typing import Any
-
-import openai
-from rich.progress import Progress
-
-from .cli import AudioSegment
+from rich.progress import Progress, TaskID
+from openai import OpenAI
+from .models import AudioSegment
 
 
 def translate_segments(
     segments: list[AudioSegment],
-    task_id: int,
+    target_language: str,
+    task_id: TaskID,
     progress: Progress,
 ) -> list[AudioSegment]:
-    """Translate segments using OpenAI."""
-    if "OPENAI_API_KEY" not in os.environ:
-        raise RuntimeError(
-            "OPENAI_API_KEY environment variable not set. "
-            "Please set it to use translation features."
-        )
-    
-    client = openai.OpenAI()
-    
-    for i, segment in enumerate(segments):
-        # Create prompt for translation and pronunciation
-        prompt = f"""Translate this text to English and provide pronunciation. Format as JSON:
-Text: {segment.text}
+    """Translate segments to target language."""
+    # Check for API key
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY environment variable not set")
 
-Return format:
-{{
-    "translation": "English translation",
-    "pronunciation": "pronunciation (pinyin for Chinese, romaji for Japanese, etc.)"
-}}
-"""
-        
+    # Initialize OpenAI client
+    client = OpenAI()
+
+    # Process each segment
+    for segment in segments:
+        # Skip if already translated
+        if segment.translation is not None:
+            progress.update(task_id, advance=1)
+            continue
+
         try:
+            # Create prompt
+            prompt = f"Translate the following text to {target_language}:\n{segment.text}"
+
+            # Call OpenAI API
             response = client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-3.5-turbo",
                 messages=[
-                    {"role": "system", "content": "You are a helpful language translation assistant."},
+                    {
+                        "role": "system",
+                        "content": f"You are a translator. Translate the given text to {target_language}.",
+                    },
                     {"role": "user", "content": prompt},
                 ],
-                response_format={"type": "json_object"},
             )
-            
-            result = response.choices[0].message.content
-            if not result:
+
+            # Extract translation
+            translation = response.choices[0].message.content
+            if not translation:
                 raise ValueError("Empty response from OpenAI")
-            
-            # Parse response
-            data = eval(result)  # Safe since we specified json_object format
-            segment.translation = data["translation"]
-            segment.pronunciation = data["pronunciation"]
-            
+
+            segment.translation = translation
+
+            # Update progress
             progress.update(task_id, advance=1)
-            
         except Exception as e:
+            if isinstance(e, ValueError):
+                raise
             raise RuntimeError(f"Translation failed: {str(e)}")
-    
+
     return segments

@@ -2,17 +2,17 @@
 
 from pathlib import Path
 
-from pydub import AudioSegment as PydubSegment
-from rich.progress import Progress
+from pydub import AudioSegment as PydubSegment  # type: ignore
+from rich.progress import Progress, TaskID
 
-from .cli import AudioSegment
+from .models import AudioSegment
 
 
 def split_audio(
     input_file: Path,
     segments: list[AudioSegment],
     output_dir: Path,
-    task_id: int,
+    task_id: TaskID,
     progress: Progress,
 ) -> list[AudioSegment]:
     """Split audio file into segments."""

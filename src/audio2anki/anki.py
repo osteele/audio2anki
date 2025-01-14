@@ -3,7 +3,7 @@
 import csv
 from pathlib import Path
 
-from .cli import AudioSegment
+from .models import AudioSegment
 
 
 def create_anki_deck(segments: list[AudioSegment], output_dir: Path) -> Path:
