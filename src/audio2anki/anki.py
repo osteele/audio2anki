@@ -13,8 +13,8 @@ def create_anki_deck(segments: list[AudioSegment], output_dir: Path) -> Path:
     with open(output_file, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f, delimiter="\t")
         
-        # Write header
-        writer.writerow(["Text", "Pronunciation", "Translation", "Audio"])
+        # Write header with comment character
+        writer.writerow(["#Text", "Pronunciation", "Translation", "Audio"])
         
         # Write segments
         for segment in segments:

@@ -11,8 +11,48 @@ import deepl
 from .models import AudioSegment
 
 
-def translate_with_openai(text: str, target_language: str, client: OpenAI) -> str:
-    """Translate text using OpenAI API."""
+def get_pinyin(text: str, client: OpenAI) -> str:
+    """Get Pinyin for Chinese text using OpenAI."""
+    response = client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a Chinese language expert. For the given Chinese text:\n"
+                    "1. Provide Pinyin with tone marks (ā/á/ǎ/à)\n"
+                    "2. Group syllables into words (no spaces between syllables of the same word)\n"
+                    "3. Capitalize proper nouns\n"
+                    "4. Use spaces only between words, not syllables\n"
+                    "5. Do not include any other text or punctuation\n\n"
+                    "Examples:\n"
+                    "Input: 我姓王，你可以叫我小王。\n"
+                    "Output: wǒ xìngwáng nǐ kěyǐ jiào wǒ Xiǎo Wáng\n\n"
+                    "Input: 他在北京大学学习。\n"
+                    "Output: tā zài Běijīng Dàxué xuéxí"
+                ),
+            },
+            {"role": "user", "content": text},
+        ],
+    )
+
+    pinyin = response.choices[0].message.content
+    if not pinyin:
+        raise ValueError("Empty response from OpenAI")
+    return pinyin.strip()
+
+
+def translate_with_openai(
+    text: str,
+    source_language: str | None,
+    target_language: str,
+    client: OpenAI,
+) -> tuple[str, str | None]:
+    """Translate text using OpenAI API.
+    
+    Returns:
+        Tuple of (translation, pinyin). Pinyin is only provided for Chinese source text.
+    """
     response = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[
@@ -27,11 +67,27 @@ def translate_with_openai(text: str, target_language: str, client: OpenAI) -> st
     translation = response.choices[0].message.content
     if not translation:
         raise ValueError("Empty response from OpenAI")
-    return translation.strip()
+    
+    # Get Pinyin if source is Chinese
+    pinyin = None
+    if source_language and source_language.lower() in ["chinese", "zh", "mandarin"]:
+        pinyin = get_pinyin(text, client)
+    
+    return translation.strip(), pinyin
 
 
-def translate_with_deepl(text: str, target_language: str, translator: deepl.Translator) -> str:
-    """Translate text using DeepL API."""
+def translate_with_deepl(
+    text: str,
+    source_language: str | None,
+    target_language: str,
+    translator: deepl.Translator,
+    openai_client: OpenAI | None = None,
+) -> tuple[str, str | None]:
+    """Translate text using DeepL API.
+    
+    Returns:
+        Tuple of (translation, pinyin). Pinyin is only provided for Chinese source text.
+    """
     # Map common language names to DeepL codes
     language_map = {
         "english": "EN-US",
@@ -48,22 +104,32 @@ def translate_with_deepl(text: str, target_language: str, translator: deepl.Tran
     
     target_code = language_map.get(target_language.lower(), target_language.upper())
     result = translator.translate_text(text, target_lang=target_code)
-    return result.text
+    
+    # Get Pinyin if source is Chinese and OpenAI client is available
+    pinyin = None
+    if source_language and source_language.lower() in ["chinese", "zh", "mandarin"] and openai_client:
+        pinyin = get_pinyin(text, openai_client)
+    
+    return result.text, pinyin
 
 
 def translate_single_segment(
     segment: AudioSegment,
+    source_language: str | None,
     target_language: str,
     translator: Any,
     use_deepl: bool = False,
+    openai_client: OpenAI | None = None,
 ) -> tuple[AudioSegment, bool]:
     """Translate a single segment to target language.
     
     Args:
         segment: Audio segment to translate
+        source_language: Source language of the text
         target_language: Target language for translation
         translator: Either OpenAI client or DeepL translator
         use_deepl: Whether to use DeepL for translation
+        openai_client: OpenAI client for Pinyin when using DeepL
     
     Returns:
         Tuple of (segment, success flag)
@@ -73,11 +139,24 @@ def translate_single_segment(
 
     try:
         if use_deepl:
-            translation = translate_with_deepl(segment.text, target_language, translator)
+            translation, pinyin = translate_with_deepl(
+                segment.text,
+                source_language,
+                target_language,
+                translator,
+                openai_client,
+            )
         else:
-            translation = translate_with_openai(segment.text, target_language, translator)
+            translation, pinyin = translate_with_openai(
+                segment.text,
+                source_language,
+                target_language,
+                translator,
+            )
 
         segment.translation = translation
+        if pinyin:
+            segment.pronunciation = pinyin
         return segment, True
 
     except Exception as e:
@@ -90,10 +169,20 @@ def translate_segments(
     target_language: str,
     task_id: TaskID,
     progress: Progress,
+    source_language: str | None = None,
 ) -> list[AudioSegment]:
     """Translate segments to target language using parallel processing."""
-    # Check for DeepL API token first
+    # Check for API keys
     deepl_token = os.environ.get("DEEPL_API_TOKEN")
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    
+    if not openai_key:
+        raise ValueError("OPENAI_API_KEY environment variable is required for translation and Pinyin")
+    
+    # Initialize OpenAI client for translation and Pinyin
+    openai_client = OpenAI(api_key=openai_key)
+    
+    # Try DeepL first if available
     if deepl_token:
         try:
             translator = deepl.Translator(deepl_token)
@@ -105,10 +194,7 @@ def translate_segments(
     
     # Fall back to OpenAI if DeepL is not available
     if not deepl_token:
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError("Neither DEEPL_API_TOKEN nor OPENAI_API_KEY environment variable is set")
-        translator = OpenAI(api_key=api_key)
+        translator = openai_client
         use_deepl = False
         progress.update(task_id, description="Translating segments using OpenAI...")
 
@@ -116,7 +202,15 @@ def translate_segments(
     with ThreadPoolExecutor(max_workers=4) as executor:
         # Submit all translation tasks
         future_to_segment = {
-            executor.submit(translate_single_segment, segment, target_language, translator, use_deepl): segment
+            executor.submit(
+                translate_single_segment,
+                segment,
+                source_language,
+                target_language,
+                translator,
+                use_deepl,
+                openai_client,  # Always pass OpenAI client for Pinyin
+            ): segment
             for segment in segments
         }
 
