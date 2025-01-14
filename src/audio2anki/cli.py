@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import os
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -20,19 +19,9 @@ from .transcribe import transcribe_audio
 from .translate import translate_segments
 from .audio import split_audio
 from .anki import create_anki_deck
+from .models import AudioSegment
 
 console = Console()
-
-
-@dataclass
-class AudioSegment:
-    """A segment of audio with its transcription and translation."""
-    start: float
-    end: float
-    text: str
-    translation: str | None = None
-    pronunciation: str | None = None
-    audio_file: str | None = None
 
 
 def process_audio(
@@ -70,7 +59,7 @@ def process_audio(
         
         # Step 2: Translate and get pronunciation
         task_id = progress.add_task("Translating segments...", total=len(segments))
-        translated_segments = translate_segments(segments, task_id, progress)
+        translated_segments = translate_segments(segments, "english", task_id, progress)
         
         # Step 3: Split audio
         task_id = progress.add_task("Splitting audio...", total=len(segments))
@@ -104,8 +93,8 @@ def process_audio(
 )
 @click.option(
     "--model",
-    type=click.Choice(["tiny", "base", "small", "medium", "large"]),
-    default="small",
+    type=click.Choice(["whisper-1"]),
+    default="whisper-1",
     help="Whisper model to use",
 )
 @click.option(
