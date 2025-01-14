@@ -1,12 +1,13 @@
 """Tests for the audio module."""
 
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+from pydub import AudioSegment as PydubSegment
 from rich.progress import Progress
 
-from audio2anki.audio import split_audio
+from audio2anki.audio import split_audio, trim_silence
 from audio2anki.models import AudioSegment
 
 
@@ -131,3 +132,26 @@ def test_split_audio_existing_media_dir(
     assert mock_from_file.call_count == 1
     assert mock_audio.__getitem__.call_count == len(segments)
     assert mock_audio.export.call_count == len(segments)
+
+
+@patch("audio2anki.audio.detect_nonsilent")
+def test_trim_silence(mock_detect_nonsilent: Mock) -> None:
+    """Test silence trimming functionality."""
+    # Create a mock audio segment
+    audio = MagicMock(spec=PydubSegment)
+    audio.__len__.return_value = 10000  # 10 seconds
+
+    # Test case 1: Normal case with silence at both ends
+    mock_detect_nonsilent.return_value = [(1000, 8000)]  # Non-silent section from 1s to 8s
+    trimmed = trim_silence(audio)
+    audio.__getitem__.assert_called_with(slice(1000, 8000))
+
+    # Test case 2: No silence to trim
+    mock_detect_nonsilent.return_value = [(0, 10000)]
+    trimmed = trim_silence(audio)
+    audio.__getitem__.assert_called_with(slice(0, 10000))
+
+    # Test case 3: All silence
+    mock_detect_nonsilent.return_value = []
+    trimmed = trim_silence(audio)
+    assert trimmed == audio  # Should return original audio
