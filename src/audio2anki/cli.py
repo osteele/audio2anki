@@ -34,55 +34,63 @@ def process_audio(
     max_length: float,
     silence_thresh: int,
     debug: bool,
+    progress: Progress,
 ) -> list[AudioSegment]:
     """Process audio file and return segments with translations."""
     
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        TimeRemainingColumn(),
-    ) as progress:
-        # Step 1: Transcribe
-        task_id = progress.add_task("Transcribing audio...", total=100)
-        segments = transcribe_audio(
-            input_file,
-            transcript_file,
-            model=model,
-            language=language,
-            min_length=min_length,
-            max_length=max_length,
-        )
-        progress.update(task_id, completed=100)
-        
-        # Step 2: Translate and get pronunciation
-        task_id = progress.add_task("Translating segments...", total=len(segments))
-        translated_segments = translate_segments(segments, "english", task_id, progress)
-        
-        # Step 3: Split audio
-        task_id = progress.add_task("Splitting audio...", total=len(segments))
-        audio_segments = split_audio(
-            input_file,
-            segments,
-            output_dir,
-            task_id,
-            progress,
-            silence_thresh=silence_thresh,
-        )
-        
-        if debug:
-            debug_file = output_dir / "debug.txt"
-            with open(debug_file, "w") as f:
-                for seg in audio_segments:
-                    f.write(f"Time: {seg.start:.2f}-{seg.end:.2f}\n")
-                    f.write(f"Text: {seg.text}\n")
-                    f.write(f"Translation: {seg.translation}\n")
-                    f.write(f"Pronunciation: {seg.pronunciation}\n")
-                    f.write(f"Audio: {seg.audio_file}\n\n")
+    # Step 1: Transcribe
+    task_id = progress.add_task("Starting transcription...", total=100)
+    segments = transcribe_audio(
+        input_file,
+        transcript_file,
+        model,
+        task_id,
+        progress,
+        language=language,
+        min_length=min_length,
+        max_length=max_length,
+    )
     
+    # Step 2: Translate and get pronunciation
+    task_id = progress.add_task("Starting translation...", total=len(segments))
+    
+    # Default to Chinese if not specified and text contains Chinese characters
+    if not language and any('\u4e00' <= c <= '\u9fff' for c in segments[0].text):
+        source_language = "chinese"
+    else:
+        source_language = language
+    
+    translated_segments = translate_segments(
+        segments,
+        "english",
+        task_id,
+        progress,
+        source_language=source_language,
+    )
+    
+    # Step 3: Split audio
+    task_id = progress.add_task("Starting audio split...", total=len(segments))
+    audio_segments = split_audio(
+        input_file,
+        segments,
+        output_dir,
+        task_id,
+        progress,
+        silence_thresh=silence_thresh,
+    )
+    
+    if debug:
+        debug_file = output_dir / "debug.txt"
+        with open(debug_file, "w") as f:
+            for seg in audio_segments:
+                f.write(f"Time: {seg.start:.2f}-{seg.end:.2f}\n")
+                f.write(f"Text: {seg.text}\n")
+                f.write(f"Translation: {seg.translation}\n")
+                f.write(f"Pronunciation: {seg.pronunciation}\n")
+                f.write(f"Audio: {seg.audio_file}\n\n")
+
     return audio_segments
 
 
@@ -146,17 +154,25 @@ def main(
     and create an Anki-compatible deck with translations and audio segments.
     """
     try:
-        segments = process_audio(
-            input_file,
-            transcript,
-            output,
-            model,
-            language,
-            min_length,
-            max_length,
-            silence_thresh,
-            debug,
-        )
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeRemainingColumn(),
+        ) as progress:
+            segments = process_audio(
+                input_file,
+                transcript,
+                output,
+                model,
+                language,
+                min_length,
+                max_length,
+                silence_thresh,
+                debug,
+                progress,
+            )
         
         # Create Anki deck
         deck_file = create_anki_deck(segments, output)

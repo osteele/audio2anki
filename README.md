@@ -5,7 +5,7 @@ Convert audio and video files into Anki flashcard decks with translations.
 `audio2anki` helps language learners create study materials from audio and video content. It automatically:
 - Transcribes audio using OpenAI Whisper
 - Segments the audio into individual utterances
-- Translates each segment using OpenAI
+- Translates each segment using OpenAI or DeepL
 - Generates pronunciation (currently supports pinyin for Mandarin)
 - Creates Anki-compatible flashcards with audio snippets
 
@@ -107,16 +107,19 @@ The tool will automatically:
 
 ### Output
 
-The tool creates:
-1. A CSV file ready for Anki import
-2. A directory of audio snippets
-3. (Optional) A debug file with detailed segment information
+The script creates an Anki-compatible deck file (`deck.txt`) and audio segments in the output directory. Import both into Anki to create flashcards with:
+- Original text
+- Translation to English
+- Pinyin pronunciation (for Chinese source text)
+- Audio playback
 
-The CSV includes fields for:
-- Source text (e.g., Hanzi for Mandarin)
-- Pronunciation (e.g., Pinyin for Mandarin)
-- English translation
-- Audio filename
+Each card in the deck will show:
+1. Front: Original text with audio
+2. Back: Translation and Pinyin (for Chinese)
+
+For Chinese content, the tool will automatically:
+1. Generate Pinyin with tone numbers (1-4)
+2. Include both translation and Pinyin on the card back
 
 ## Development
 
