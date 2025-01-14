@@ -21,13 +21,12 @@ Convert audio and video files into Anki flashcard decks with translations.
 ## Requirements
 
 - Python 3.10 or later
-- OpenAI API key (set as `OPENAI_API_KEY` environment variable)
+- OpenAI API key (set as `OPENAI_API_KEY` environment variable) or DeepL API token (set as `DEEPL_API_TOKEN` environment variable)
 
 ## Installation
 
 ```bash
-uv venv
-uv pip install -e .
+uv tool install https://github.com/osteele/audio2anki.git
 ```
 
 ## Usage
@@ -78,6 +77,33 @@ Options:
   --language LANG    Source language (default: auto-detect)
   --silence-thresh DB Silence threshold (default: -40)
 ```
+
+### Environment Variables
+
+Required:
+- `OPENAI_API_KEY` - OpenAI API key (required if DeepL is not used)
+
+Optional:
+- `DEEPL_API_TOKEN` - DeepL API key (recommended for higher quality translations)
+
+### Translation Services
+
+The tool supports two translation services:
+
+1. **DeepL** (Preferred)
+   - Higher quality translations, especially for European languages
+   - Get an API key from [DeepL Pro](https://www.deepl.com/pro-api)
+   - Set environment variable: `export DEEPL_API_TOKEN=your-api-key`
+
+2. **OpenAI** (Fallback)
+   - Used when DeepL is not configured or fails
+   - Get an API key from [OpenAI](https://platform.openai.com/api-keys)
+   - Set environment variable: `export OPENAI_API_KEY=your-api-key`
+
+The tool will automatically:
+1. Try to use DeepL first if `DEEPL_API_TOKEN` is set
+2. Fall back to OpenAI if DeepL is not available or fails
+3. Show an error if neither API key is available
 
 ### Output
 
