@@ -9,6 +9,8 @@ Convert audio and video files into Anki flashcard decks with translations.
 - Generates pronunciation (currently supports pinyin for Mandarin)
 - Creates Anki-compatible flashcards with audio snippets
 
+![audio2anki](./docs/preview.png)
+
 ## Features
 
 - 🎵 Process audio files (mp3, wav, etc.) and video files
@@ -107,19 +109,44 @@ The tool will automatically:
 
 ### Output
 
-The script creates an Anki-compatible deck file (`deck.txt`) and audio segments in the output directory. Import both into Anki to create flashcards with:
-- Original text
-- Translation to English
-- Pinyin pronunciation (for Chinese source text)
-- Audio playback
+The script creates:
+1. A tab-separated deck file (`deck.txt`) containing:
+   - Original text (e.g., Chinese characters)
+   - Pronunciation (e.g., Pinyin with tone marks)
+   - English translation
+   - Audio reference
+2. A `media` directory containing the audio segments
 
-Each card in the deck will show:
-1. Front: Original text with audio
-2. Back: Translation and Pinyin (for Chinese)
+### Importing into Anki
 
-For Chinese content, the tool will automatically:
-1. Generate Pinyin with tone numbers (1-4)
-2. Include both translation and Pinyin on the card back
+1. **Import the Deck**:
+   - Open Anki
+   - Click `File` > `Import`
+   - Select the generated `deck.txt` file
+   - In the import dialog:
+     - Set the Type to "Basic"
+     - Check that fields are mapped correctly:
+       - Field 1: Front (Original text)
+       - Field 2: Pronunciation
+       - Field 3: Back (Translation)
+       - Field 4: Audio
+     - Set "Field separator" to "Tab"
+     - Check "Allow HTML in fields"
+
+2. **Import the Audio**:
+   - Copy all files from the `media` directory
+   - Paste them into your Anki media collection:
+     - On Mac: [~/Library/Application Support/Anki2/User 1/collection.media](file:///Users/$(whoami)/Library/Application%20Support/Anki2/User%201/collection.media)
+     - On Windows: [%APPDATA%\Anki2\User 1\collection.media](file:///C:/Users/%USERNAME%/AppData/Roaming/Anki2/User%201/collection.media)
+     - On Linux: [~/.local/share/Anki2/User 1/collection.media](file:///home/$(whoami)/.local/share/Anki2/User%201/collection.media)
+
+3. **Verify the Import**:
+   - The cards should show:
+     - Front: Original text
+     - Back: Pronunciation, translation, and a play button for audio
+   - Test the audio playback on a few cards
+
+**Note**: The audio filenames include a hash of the source file to prevent conflicts when importing multiple decks.
 
 ## Development
 
