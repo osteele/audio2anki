@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 
 import os
+import platform
 from pathlib import Path
 from typing import Optional
 
 import click
 from rich.console import Console
+from rich.panel import Panel
 from rich.progress import (
     Progress,
     SpinnerColumn,
@@ -22,6 +24,52 @@ from .anki import create_anki_deck
 from .models import AudioSegment
 
 console = Console()
+
+
+def get_anki_media_path() -> str:
+    """Get the platform-specific Anki media collection path."""
+    system = platform.system()
+    username = os.environ.get("USER") or os.environ.get("USERNAME")
+    
+    if system == "Darwin":  # macOS
+        return f"/Users/{username}/Library/Application Support/Anki2/User 1/collection.media"
+    elif system == "Windows":
+        return f"C:/Users/{username}/AppData/Roaming/Anki2/User 1/collection.media"
+    else:  # Linux
+        return f"/home/{username}/.local/share/Anki2/User 1/collection.media"
+
+
+def print_import_instructions(console: Console, output_dir: Path) -> None:
+    """Print instructions for importing into Anki."""
+    media_path = get_anki_media_path()
+    
+    instructions = (
+        "[bold]Import Instructions[/bold]\n\n"
+        "1. [bold]Import the Deck[/bold]:\n"
+        f"   - Open Anki\n"
+        f"   - Click File > Import\n"
+        f"   - Select: {output_dir}/deck.txt\n"
+        "   - In the import dialog:\n"
+        "     • Set Type to \"Basic\"\n"
+        "     • Check field mapping:\n"
+        "       ‣ Field 1: Front (Original text)\n"
+        "       ‣ Field 2: Pronunciation\n"
+        "       ‣ Field 3: Back (Translation)\n"
+        "       ‣ Field 4: Audio\n"
+        "     • Set \"Field separator\" to \"Tab\"\n"
+        "     • Check \"Allow HTML in fields\"\n\n"
+        "2. [bold]Import the Audio[/bold]:\n"
+        f"   - Copy all files from: {output_dir}/media\n"
+        f"   - Paste them into: {media_path}\n\n"
+        "3. [bold]Verify the Import[/bold]:\n"
+        "   - Check that cards show:\n"
+        "     • Front: Original text\n"
+        "     • Back: Pronunciation, translation, and audio\n"
+        "   - Test the audio playback"
+    )
+    
+    console.print()
+    console.print(Panel(instructions, title="Next Steps", expand=False))
 
 
 def process_audio(
@@ -98,45 +146,54 @@ def process_audio(
 @click.argument("input_file", type=click.Path(exists=True, path_type=Path))
 @click.option(
     "--transcript",
-    type=click.Path(exists=True, path_type=Path),
-    help="Optional transcript file",
+    type=click.Path(path_type=Path),
+    help="Path to transcript file (optional)",
 )
 @click.option(
     "--output",
     type=click.Path(path_type=Path),
-    default="./output",
-    help="Output directory",
+    default=Path("output"),
+    help="Output directory (default: output)",
 )
 @click.option(
     "--model",
-    type=click.Choice(["whisper-1"]),
+    type=str,
     default="whisper-1",
-    help="Whisper model to use",
+    help="Whisper model to use (default: whisper-1)",
 )
 @click.option(
     "--language",
     type=str,
-    help="Source language (if not specified, will be auto-detected)",
+    help="Source language (default: auto-detect)",
 )
 @click.option(
     "--min-length",
     type=float,
     default=1.0,
-    help="Minimum segment length in seconds",
+    help="Minimum segment length in seconds (default: 1.0)",
 )
 @click.option(
     "--max-length",
     type=float,
-    default=10.0,
-    help="Maximum segment length in seconds",
+    default=15.0,
+    help="Maximum segment length in seconds (default: 15.0)",
 )
 @click.option(
     "--silence-thresh",
     type=int,
     default=-40,
-    help="Silence threshold in dB. Higher values mean more aggressive silence detection",
+    help="Silence threshold in dB (default: -40)",
 )
-@click.option("--debug/--no-debug", default=False, help="Enable debug output")
+@click.option(
+    "--debug/--no-debug",
+    default=False,
+    help="Enable debug output",
+)
+@click.option(
+    "--quiet/--no-quiet",
+    default=False,
+    help="Suppress import instructions",
+)
 def main(
     input_file: Path,
     transcript: Path | None,
@@ -147,12 +204,17 @@ def main(
     max_length: float,
     silence_thresh: int,
     debug: bool,
+    quiet: bool,
 ) -> None:
     """Convert audio files to Anki flashcards with translations.
     
     Process an audio or video file, optionally using an existing transcript,
     and create an Anki-compatible deck with translations and audio segments.
     """
+    console = Console()
+    segments = []
+    deck_file = None
+    
     try:
         with Progress(
             SpinnerColumn(),
@@ -160,6 +222,7 @@ def main(
             BarColumn(),
             TaskProgressColumn(),
             TimeRemainingColumn(),
+            console=console,
         ) as progress:
             segments = process_audio(
                 input_file,
@@ -173,14 +236,21 @@ def main(
                 debug,
                 progress,
             )
+            
+            # Create Anki deck
+            deck_file = create_anki_deck(segments, output)
         
-        # Create Anki deck
-        deck_file = create_anki_deck(segments, output)
-        console.print(f"\n✨ Created Anki deck: {deck_file}")
-        console.print("Import this file into Anki along with the media files in the output directory.")
+        # Show success message and instructions after progress completes
+        console.print(f"\n✨ Created Anki deck with {len(segments)} cards")
+        console.print(f"📝 Deck file: {deck_file}")
+        console.print(f"🔊 Audio files: {output}/media/")
         
+        # Show import instructions unless quiet mode is enabled
+        if not quiet:
+            print_import_instructions(console, output)
+            
     except Exception as e:
-        console.print(f"\n❌ Error: {str(e)}", style="red")
+        console.print(f"\n❌ Error: {str(e)}")
         raise click.Abort()
 
 
