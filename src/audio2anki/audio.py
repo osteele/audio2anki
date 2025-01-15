@@ -1,5 +1,6 @@
 """Audio processing module."""
 
+import hashlib
 from pathlib import Path
 
 from pydub import AudioSegment as PydubSegment  # type: ignore
@@ -7,6 +8,17 @@ from pydub.silence import detect_nonsilent  # type: ignore
 from rich.progress import Progress, TaskID
 
 from .models import AudioSegment
+
+
+def compute_file_hash(file_path: Path, chunk_size: int = 8192) -> str:
+    """Compute SHA-256 hash of a file."""
+    sha256_hash = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        # Read the file in chunks to handle large files efficiently
+        for chunk in iter(lambda: f.read(chunk_size), b""):
+            sha256_hash.update(chunk)
+    # Return first 8 characters of hash
+    return sha256_hash.hexdigest()[:8]
 
 
 def trim_silence(audio: PydubSegment, min_silence_len: int = 100, silence_thresh: int = -50) -> PydubSegment:
@@ -61,6 +73,9 @@ def split_audio(
     """
     # Load audio file
     audio = PydubSegment.from_file(str(input_file))
+    
+    # Compute hash of input file
+    file_hash = compute_file_hash(input_file)
 
     # Create media directory
     media_dir = output_dir / "media"
@@ -76,10 +91,11 @@ def split_audio(
         # Trim silence
         segment_audio = trim_silence(segment_audio, silence_thresh=silence_thresh)
 
-        # Export audio segment
-        segment_path = media_dir / f"segment_{i+1:03d}.mp3"
+        # Export audio segment with hash in filename
+        filename = f"audio2anki_{file_hash}_{i+1:03d}.mp3"
+        segment_path = media_dir / filename
         segment_audio.export(segment_path, format="mp3")
-        segment.audio_path = segment_path
+        segment.audio_file = filename
 
         # Update progress
         progress.update(task_id, advance=1)
