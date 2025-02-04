@@ -4,9 +4,9 @@ import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-from rich.progress import Progress, TaskID
-from openai import OpenAI
 import deepl
+from openai import OpenAI
+from rich.progress import Progress, TaskID
 
 from .models import AudioSegment
 
@@ -49,7 +49,7 @@ def translate_with_openai(
     client: OpenAI,
 ) -> tuple[str, str | None]:
     """Translate text using OpenAI API.
-    
+
     Returns:
         Tuple of (translation, pinyin). Pinyin is only provided for Chinese source text.
     """
@@ -67,12 +67,12 @@ def translate_with_openai(
     translation = response.choices[0].message.content
     if not translation:
         raise ValueError("Empty response from OpenAI")
-    
+
     # Get Pinyin if source is Chinese
     pinyin = None
     if source_language and source_language.lower() in ["chinese", "zh", "mandarin"]:
         pinyin = get_pinyin(text, client)
-    
+
     return translation.strip(), pinyin
 
 
@@ -84,7 +84,7 @@ def translate_with_deepl(
     openai_client: OpenAI | None = None,
 ) -> tuple[str, str | None]:
     """Translate text using DeepL API.
-    
+
     Returns:
         Tuple of (translation, pinyin). Pinyin is only provided for Chinese source text.
     """
@@ -101,16 +101,21 @@ def translate_with_deepl(
         "portuguese": "PT-BR",
         "russian": "RU",
     }
-    
+
     target_code = language_map.get(target_language.lower(), target_language.upper())
     result = translator.translate_text(text, target_lang=target_code)
-    
+
     # Get Pinyin if source is Chinese and OpenAI client is available
     pinyin = None
     if source_language and source_language.lower() in ["chinese", "zh", "mandarin"] and openai_client:
         pinyin = get_pinyin(text, openai_client)
-    
-    return result.text, pinyin
+
+    # For DeepL, result is a TextResult object or list of TextResult objects
+    # For OpenAI, result is already a string
+    result_text = getattr(result, "text", None)
+    translation = str(result_text if result_text is not None else result)
+
+    return translation, pinyin
 
 
 def translate_single_segment(
@@ -122,7 +127,7 @@ def translate_single_segment(
     openai_client: OpenAI | None = None,
 ) -> tuple[AudioSegment, bool]:
     """Translate a single segment to target language.
-    
+
     Args:
         segment: Audio segment to translate
         source_language: Source language of the text
@@ -130,7 +135,7 @@ def translate_single_segment(
         translator: Either OpenAI client or DeepL translator
         use_deepl: Whether to use DeepL for translation
         openai_client: OpenAI client for Pinyin when using DeepL
-    
+
     Returns:
         Tuple of (segment, success flag)
     """
@@ -175,13 +180,17 @@ def translate_segments(
     # Check for API keys
     deepl_token = os.environ.get("DEEPL_API_TOKEN")
     openai_key = os.environ.get("OPENAI_API_KEY")
-    
+
     if not openai_key:
         raise ValueError("OPENAI_API_KEY environment variable is required for translation and Pinyin")
-    
+
     # Initialize OpenAI client for translation and Pinyin
     openai_client = OpenAI(api_key=openai_key)
-    
+
+    # Initialize translator and use_deepl flag
+    translator = openai_client  # Default to OpenAI
+    use_deepl = False
+
     # Try DeepL first if available
     if deepl_token:
         try:
@@ -191,7 +200,7 @@ def translate_segments(
         except Exception as e:
             print(f"Warning: Failed to initialize DeepL ({str(e)}), falling back to OpenAI")
             deepl_token = None
-    
+
     # Fall back to OpenAI if DeepL is not available
     if not deepl_token:
         translator = openai_client
@@ -215,12 +224,15 @@ def translate_segments(
         }
 
         # Process completed translations
-        translated_segments = []
+        translated_segments: list[AudioSegment] = []
+        total_success = 0
         for future in as_completed(future_to_segment):
             segment, success = future.result()
             translated_segments.append(segment)
+            if success:
+                total_success += 1
             progress.update(task_id, advance=1)
 
-        progress.update(task_id, description="Translation complete")
+        progress.update(task_id, description=f"Translation complete ({total_success}/{len(segments)} successful)")
 
     return translated_segments
