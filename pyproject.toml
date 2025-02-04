@@ -6,7 +6,7 @@ authors = [{ name = "Oliver Steele", email = "steele@osteele.com" }]
 dependencies = [
     "click>=8.1.7",
     "rich>=13.7.0",
-    "openai>=1.6.0",
+    "openai>=1.8.0",
     "pydub>=0.25.1",
     "deepl>=1.16.1",
     "gradio-client>=0.10.1",
