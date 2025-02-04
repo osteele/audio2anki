@@ -9,6 +9,7 @@ dependencies = [
     "openai>=1.6.0",
     "pydub>=0.25.1",
     "deepl>=1.16.1",
+    "gradio-client>=0.10.1",
 ]
 requires-python = ">=3.10"
 
@@ -17,15 +18,38 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [dependency-groups]
-dev = ["black>=23.12.1", "mypy>=1.8.0", "ruff>=0.1.9", "pytest>=7.4.4"]
+dev = [
+    "ruff>=0.1.9",
+    "pyright>=1.1.392.post0",
+    "pytest>=7.4.4",
+    "pydub-stubs>=0.25.1.5",
+]
 
 [tool.ruff]
 line-length = 120
 target-version = "py310"
+src = ["src"]
+extend-include = ["*.pyi"]
+lint.select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+]
 
-[tool.black]
-line-length = 120
-target-version = ["py310"]
+[tool.ruff.lint.isort]
+known-first-party = ["audio2anki"]
 
 [project.scripts]
 audio2anki = "audio2anki.cli:main"
+
+[tool.pytest.ini_options]
+addopts = "-ra -q"
+filterwarnings = [
+    "ignore:'audioop' is deprecated:DeprecationWarning",
+    'ignore:invalid escape sequence.*:DeprecationWarning',
+    "ignore:websockets.legacy is deprecated:DeprecationWarning",
+]
