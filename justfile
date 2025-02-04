@@ -1,20 +1,24 @@
 default:
     @just --list
 
-# Run all checks (type checking and linting)
-check:
-    uv run --dev mypy src/
-    uv run --dev ruff check src/
-    uv run --dev black --check src/
+# Run all checks (linting, type checking, and tests)
+check: lint test
 
 # Format code
-fmt:
-    uv run --dev black src/
-    uv run --dev ruff --fix src/
+format:
+    uv run --dev ruff format .
+
+fix: format
+    uv run --dev ruff check --fix --unsafe-fixes .
+
+# Run linting
+lint:
+    uv run --dev ruff check .
+    uv run --dev pyright .
 
 # Run tests
-test:
-    uv run --dev pytest tests/
+test *ARGS:
+    uv run --dev pytest tests/ {{ARGS}}
 
 # Install the package in development mode
 install:
