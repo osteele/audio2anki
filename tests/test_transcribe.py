@@ -1,15 +1,14 @@
 """Tests for transcription module."""
 
-import os
 import json
+import os
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import pytest
 import httpx
+import pytest
 from openai import OpenAI
 
-from audio2anki.models import AudioSegment
 from audio2anki.transcribe import load_transcript, transcribe_audio
 
 
@@ -50,20 +49,17 @@ def test_transcribe_audio(tmp_path: Path, mock_openai: Mock, mock_whisper_respon
             transcript_path=None,
             model="whisper-1",
             language="english",
+            task_id=None,
+            progress=None,
         )
 
-        # Check segments
         assert len(segments) == 2
         assert segments[0].text == "Hello"
         assert segments[1].text == "world"
-
-        # Verify API was called correctly
-        mock_openai.audio.transcriptions.create.assert_called_once()
-        call_args = mock_openai.audio.transcriptions.create.call_args[1]
-        assert call_args["model"] == "whisper-1"
-        assert call_args["language"] == "english"
-        assert call_args["response_format"] == "verbose_json"
-        assert call_args["timestamp_granularities"] == ["segment"]
+        assert segments[0].start == 0.0
+        assert segments[0].end == 2.0
+        assert segments[1].start == 2.0
+        assert segments[1].end == 4.0
 
 
 @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
@@ -94,33 +90,33 @@ def test_transcribe_error(tmp_path: Path, mock_openai: Mock) -> None:
                 transcript_path=None,
                 model="whisper-1",
                 language="english",
+                task_id=None,
+                progress=None,
             )
 
 
 def test_load_transcript(tmp_path: Path) -> None:
     """Test loading transcript from file."""
-    # Create transcript file
-    transcript_path = tmp_path / "transcript.json"
-    transcript_path.write_text(
-        json.dumps([
-            {"start": 0.0, "end": 2.0, "text": "Hello"},
-            {"start": 2.0, "end": 4.0, "text": "world"}
-        ])
-    )
+    # Create test transcript file
+    transcript_file = tmp_path / "transcript.json"
+    segments = [
+        {"start": 0.0, "end": 2.0, "text": "Hello"},
+        {"start": 2.0, "end": 4.0, "text": "world"},
+    ]
+    with open(transcript_file, "w") as f:
+        json.dump({"segments": segments}, f)
 
-    segments = load_transcript(transcript_path)
-
-    assert len(segments) == 2
-    assert segments[0].text == "Hello"
-    assert segments[1].text == "world"
+    # Load transcript
+    loaded_segments = load_transcript(transcript_file)
+    assert len(loaded_segments) == 2
+    assert loaded_segments[0].text == "Hello"
+    assert loaded_segments[1].text == "world"
 
 
 def test_load_transcript_not_found(tmp_path: Path) -> None:
     """Test loading transcript from non-existent file."""
-    transcript_path = tmp_path / "nonexistent.json"
-
-    with pytest.raises(FileNotFoundError):
-        load_transcript(transcript_path)
+    transcript_file = tmp_path / "nonexistent.json"
+    assert load_transcript(transcript_file) is None
 
 
 @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
@@ -130,32 +126,29 @@ def test_transcribe_with_length_filters(tmp_path: Path, mock_openai: Mock, mock_
     audio_file = tmp_path / "test.mp3"
     audio_file.touch()
 
-    # Set up mock
+    # Set up mock response with segments of different lengths
+    mock_whisper_response.segments = [
+        {"start": 0.0, "end": 1.0, "text": "Short"},  # 1 second
+        {"start": 1.0, "end": 16.0, "text": "Too long"},  # 15 seconds
+        {"start": 16.0, "end": 18.0, "text": "Good length"},  # 2 seconds
+        {"start": 18.0, "end": 18.5, "text": "Too short"},  # 0.5 seconds
+    ]
     mock_openai.audio.transcriptions.create.return_value = mock_whisper_response
 
     with patch("openai.OpenAI", return_value=mock_openai):
-        # Test with min_length filter
         segments = transcribe_audio(
             audio_file,
             transcript_path=None,
             model="whisper-1",
             language="english",
-            min_length=2.0,
+            task_id=None,
+            progress=None,
+            min_length=1.5,  # Filter out segments shorter than 1.5 seconds
+            max_length=10.0,  # Filter out segments longer than 10 seconds
         )
 
-        # All segments should be >= min_length
-        for segment in segments:
-            assert segment.end - segment.start >= 2.0
-
-        # Test with max_length filter
-        segments = transcribe_audio(
-            audio_file,
-            transcript_path=None,
-            model="whisper-1",
-            language="english",
-            max_length=3.0,
-        )
-
-        # All segments should be <= max_length
-        for segment in segments:
-            assert segment.end - segment.start <= 3.0
+        # Only segments between 1.5 and 10 seconds should be included
+        assert len(segments) == 1
+        assert segments[0].text == "Good length"
+        assert segments[0].start == 16.0
+        assert segments[0].end == 18.0

@@ -20,8 +20,10 @@ def segments() -> list[AudioSegment]:
     ]
 
 
-def mock_export(output_path: Path, format: str, parameters: list[str]) -> None:
+def mock_export(output_path: Path, format: str, parameters: list[str] | None = None) -> None:
     """Mock export function that creates empty files."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.touch()
 
 
@@ -54,8 +56,10 @@ def test_split_audio(
     # Check results
     assert len(result) == len(segments)
     assert all(s.audio_file is not None for s in result)
-    assert all(s.audio_file.startswith("audio_") and s.audio_file.endswith(".mp3") for s in result)
-    assert all((output_dir / "media" / s.audio_file).exists() for s in result)
+    assert all(
+        s.audio_file and s.audio_file.startswith("audio2anki_") and s.audio_file.endswith(".mp3") for s in result
+    )
+    assert all(s.audio_file and (output_dir / "media" / s.audio_file).exists() for s in result)
 
     # Verify mock calls
     assert mock_from_file.call_count == 1
@@ -125,8 +129,10 @@ def test_split_audio_existing_media_dir(
     # Check results
     assert len(result) == len(segments)
     assert all(s.audio_file is not None for s in result)
-    assert all(s.audio_file.startswith("audio_") and s.audio_file.endswith(".mp3") for s in result)
-    assert all((output_dir / "media" / s.audio_file).exists() for s in result)
+    assert all(
+        s.audio_file and s.audio_file.startswith("audio2anki_") and s.audio_file.endswith(".mp3") for s in result
+    )
+    assert all(s.audio_file and (output_dir / "media" / s.audio_file).exists() for s in result)
 
     # Verify mock calls
     assert mock_from_file.call_count == 1

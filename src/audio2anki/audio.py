@@ -46,7 +46,9 @@ def trim_silence(audio: PydubSegment, min_silence_len: int = 100, silence_thresh
     start_trim = nonsilent_ranges[0][0]
     end_trim = nonsilent_ranges[-1][1]
 
-    return audio[start_trim:end_trim]
+    # Return the trimmed audio segment
+    trimmed = audio[start_trim:end_trim]
+    return trimmed if isinstance(trimmed, PydubSegment) else next(trimmed)
 
 
 def split_audio(
@@ -73,7 +75,7 @@ def split_audio(
     """
     # Load audio file
     audio = PydubSegment.from_file(str(input_file))
-    
+
     # Compute hash of input file
     file_hash = compute_file_hash(input_file)
 
@@ -92,7 +94,7 @@ def split_audio(
         segment_audio = trim_silence(segment_audio, silence_thresh=silence_thresh)
 
         # Export audio segment with hash in filename
-        filename = f"audio2anki_{file_hash}_{i+1:03d}.mp3"
+        filename = f"audio2anki_{file_hash}_{i + 1:03d}.mp3"
         segment_path = media_dir / filename
         segment_audio.export(segment_path, format="mp3")
         segment.audio_file = filename
