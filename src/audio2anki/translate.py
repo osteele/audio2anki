@@ -1,12 +1,12 @@
 """Translation module using OpenAI or DeepL API."""
 
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any
+from concurrent.futures import ThreadPoolExecutor
 
-from rich.progress import Progress, TaskID
+from deepl import Translator as DeepLTranslator
+from deepl.api_data import TextResult
 from openai import OpenAI
-import deepl
+from rich.progress import Progress, TaskID
 
 from .models import AudioSegment
 
@@ -49,30 +49,34 @@ def translate_with_openai(
     client: OpenAI,
 ) -> tuple[str, str | None]:
     """Translate text using OpenAI API.
-    
+
     Returns:
         Tuple of (translation, pinyin). Pinyin is only provided for Chinese source text.
     """
+    # Detect if text contains Chinese characters
+    has_chinese = any("\u4e00" <= c <= "\u9fff" for c in text)
+
     response = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[
             {
                 "role": "system",
-                "content": f"You are a translator. Translate the given text to {target_language}.",
+                "content": (
+                    f"You are a translator. Translate the following text to {target_language}. "
+                    "Return only the translation, no explanations."
+                ),
             },
-            {"role": "user", "content": f"Translate the following text to {target_language}:\n{text}"},
+            {"role": "user", "content": text},
         ],
     )
 
     translation = response.choices[0].message.content
     if not translation:
         raise ValueError("Empty response from OpenAI")
-    
-    # Get Pinyin if source is Chinese
-    pinyin = None
-    if source_language and source_language.lower() in ["chinese", "zh", "mandarin"]:
-        pinyin = get_pinyin(text, client)
-    
+
+    # Get Pinyin if source text contains Chinese characters
+    pinyin = get_pinyin(text, client) if has_chinese else None
+
     return translation.strip(), pinyin
 
 
@@ -80,14 +84,17 @@ def translate_with_deepl(
     text: str,
     source_language: str | None,
     target_language: str,
-    translator: deepl.Translator,
+    translator: DeepLTranslator,
     openai_client: OpenAI | None = None,
 ) -> tuple[str, str | None]:
     """Translate text using DeepL API.
-    
+
     Returns:
         Tuple of (translation, pinyin). Pinyin is only provided for Chinese source text.
     """
+    # Detect if text contains Chinese characters
+    has_chinese = any("\u4e00" <= c <= "\u9fff" for c in text)
+
     # Map common language names to DeepL codes
     language_map = {
         "english": "EN-US",
@@ -101,28 +108,27 @@ def translate_with_deepl(
         "portuguese": "PT-BR",
         "russian": "RU",
     }
-    
+
     target_code = language_map.get(target_language.lower(), target_language.upper())
     result = translator.translate_text(text, target_lang=target_code)
-    
-    # Get Pinyin if source is Chinese and OpenAI client is available
-    pinyin = None
-    if source_language and source_language.lower() in ["chinese", "zh", "mandarin"] and openai_client:
-        pinyin = get_pinyin(text, openai_client)
-    
-    return result.text, pinyin
+    translation = process_text_result(result)
+
+    # Get Pinyin if source text contains Chinese characters and OpenAI client is available
+    pinyin = get_pinyin(text, openai_client) if has_chinese and openai_client else None
+
+    return translation, pinyin
 
 
 def translate_single_segment(
     segment: AudioSegment,
     source_language: str | None,
     target_language: str,
-    translator: Any,
+    translator: DeepLTranslator | OpenAI,
     use_deepl: bool = False,
     openai_client: OpenAI | None = None,
 ) -> tuple[AudioSegment, bool]:
     """Translate a single segment to target language.
-    
+
     Args:
         segment: Audio segment to translate
         source_language: Source language of the text
@@ -130,7 +136,7 @@ def translate_single_segment(
         translator: Either OpenAI client or DeepL translator
         use_deepl: Whether to use DeepL for translation
         openai_client: OpenAI client for Pinyin when using DeepL
-    
+
     Returns:
         Tuple of (segment, success flag)
     """
@@ -138,7 +144,7 @@ def translate_single_segment(
         return segment, True
 
     try:
-        if use_deepl:
+        if use_deepl and isinstance(translator, DeepLTranslator):
             translation, pinyin = translate_with_deepl(
                 segment.text,
                 source_language,
@@ -146,13 +152,15 @@ def translate_single_segment(
                 translator,
                 openai_client,
             )
-        else:
+        elif isinstance(translator, OpenAI):
             translation, pinyin = translate_with_openai(
                 segment.text,
                 source_language,
                 target_language,
                 translator,
             )
+        else:
+            raise ValueError("Unsupported translator type")
 
         segment.translation = translation
         if pinyin:
@@ -166,61 +174,122 @@ def translate_single_segment(
 
 def translate_segments(
     segments: list[AudioSegment],
-    target_language: str,
     task_id: TaskID,
     progress: Progress,
-    source_language: str | None = None,
+    target_language: str = "en",
+    use_deepl: bool = False,
 ) -> list[AudioSegment]:
-    """Translate segments to target language using parallel processing."""
-    # Check for API keys
-    deepl_token = os.environ.get("DEEPL_API_TOKEN")
-    openai_key = os.environ.get("OPENAI_API_KEY")
-    
-    if not openai_key:
-        raise ValueError("OPENAI_API_KEY environment variable is required for translation and Pinyin")
-    
-    # Initialize OpenAI client for translation and Pinyin
-    openai_client = OpenAI(api_key=openai_key)
-    
-    # Try DeepL first if available
-    if deepl_token:
-        try:
-            translator = deepl.Translator(deepl_token)
-            use_deepl = True
-            progress.update(task_id, description="Translating segments using DeepL...")
-        except Exception as e:
-            print(f"Warning: Failed to initialize DeepL ({str(e)}), falling back to OpenAI")
-            deepl_token = None
-    
-    # Fall back to OpenAI if DeepL is not available
-    if not deepl_token:
-        translator = openai_client
-        use_deepl = False
-        progress.update(task_id, description="Translating segments using OpenAI...")
+    """Translate segments using either OpenAI or DeepL."""
+    if not segments:
+        return segments
 
-    # Use ThreadPoolExecutor for parallel processing
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        # Submit all translation tasks
-        future_to_segment = {
-            executor.submit(
-                translate_single_segment,
-                segment,
-                source_language,
-                target_language,
-                translator,
-                use_deepl,
-                openai_client,  # Always pass OpenAI client for Pinyin
-            ): segment
-            for segment in segments
-        }
+    # Initialize translation client
+    if use_deepl:
+        deepl_key = os.environ.get("DEEPL_API_KEY")
+        if not deepl_key:
+            raise ValueError("DEEPL_API_KEY environment variable not set")
+        translator = DeepLTranslator(auth_key=deepl_key)
+    else:
+        openai_key = os.environ.get("OPENAI_API_KEY")
+        if not openai_key:
+            raise ValueError("OPENAI_API_KEY environment variable not set")
+        translator = OpenAI()
 
-        # Process completed translations
+    # Process segments in parallel
+    with ThreadPoolExecutor() as executor:
+        futures = []
+        for segment in segments:
+            if segment.text:
+                if use_deepl:
+                    futures.append(
+                        executor.submit(
+                            lambda t: translate_with_deepl(t, None, target_language, translator),
+                            segment.text,
+                        )
+                    )
+                else:
+                    futures.append(
+                        executor.submit(
+                            lambda t: translate_with_openai(t, None, target_language, translator),
+                            segment.text,
+                        )
+                    )
+
+        # Process results
         translated_segments = []
-        for future in as_completed(future_to_segment):
-            segment, success = future.result()
-            translated_segments.append(segment)
-            progress.update(task_id, advance=1)
-
-        progress.update(task_id, description="Translation complete")
+        for segment, future in zip(segments, futures, strict=True):
+            try:
+                if future:
+                    translation, pinyin = future.result()
+                    segment.translation = translation
+                    if pinyin:
+                        segment.pronunciation = pinyin
+                translated_segments.append(segment)
+                progress.update(task_id, advance=1)
+            except Exception as e:
+                raise RuntimeError(f"Error translating segment: {str(e)}") from e
+                segment.translation = None
+                translated_segments.append(segment)
+                progress.update(task_id, advance=1)
 
     return translated_segments
+
+
+def detect_language(text: str) -> str:
+    """Detect language of text using OpenAI."""
+    client = OpenAI()
+    response = client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a language detector. Return only the ISO 639-1 language code for the given text.",
+            },
+            {"role": "user", "content": text},
+        ],
+    )
+    result = response.choices[0].message.content
+    return result.strip() if result else "en"
+
+
+def process_text_result(result: TextResult | list[TextResult]) -> str:
+    """Process text result from DeepL API."""
+    if isinstance(result, list):
+        # Handle empty list case
+        if not result:
+            return ""
+        # Join texts from all results
+        return " ".join(r.text for r in result)
+    # Single result case
+    return result.text
+
+
+def translate_text(
+    text: str,
+    source_lang: str,
+    target_lang: str,
+    translator: DeepLTranslator | OpenAI,
+    task_id: TaskID,
+    progress: Progress,
+) -> str:
+    """Translate text using the provided translator."""
+    try:
+        if isinstance(translator, DeepLTranslator):
+            result = translator.translate_text(text=text, target_lang=target_lang, source_lang=source_lang)
+            return process_text_result(result)
+        elif isinstance(translator, OpenAI):
+            response = translator.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": f"Translate to {target_lang}. Return only translation.",
+                    },
+                    {"role": "user", "content": text},
+                ],
+            )
+            return response.choices[0].message.content or text
+        else:
+            raise ValueError(f"Unsupported translator type: {type(translator)}")
+    except Exception as e:
+        raise RuntimeError(f"Translation failed: {str(e)}") from e

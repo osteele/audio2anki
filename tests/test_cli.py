@@ -1,10 +1,11 @@
 """Tests for the CLI module."""
 
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 import pytest
 from click.testing import CliRunner
+from rich.progress import Progress
 
 from audio2anki.cli import main, process_audio
 from audio2anki.models import AudioSegment
@@ -49,29 +50,35 @@ def test_process_audio(
     mock_translate.return_value = mock_segments
     mock_split.return_value = mock_segments
     mock_create_deck.return_value = tmp_path / "deck.txt"
-    
+
     # Create test files
     input_file = tmp_path / "test.mp3"
     input_file.touch()
     output_dir = tmp_path / "output"
-    
+    output_dir.mkdir(exist_ok=True)
+
     # Process audio
-    segments = process_audio(
-        input_file,
-        None,
-        output_dir,
-        "small",
-        None,
-        1.0,
-        15.0,
-        True,
-    )
-    
+    with Progress() as progress:
+        process_audio(
+            input_file,
+            None,
+            output_dir,
+            "small",
+            "english",
+            1.0,
+            15.0,
+            -40,
+            True,
+            progress,
+            None,
+        )
+
     # Verify pipeline
     mock_transcribe.assert_called_once()
-    mock_translate.assert_called_once()
+    mock_translate.assert_called_once_with(mock_segments, ANY, ANY, "english")
     mock_split.assert_called_once()
-    
+    mock_create_deck.assert_called_once()
+
     # Check debug file creation
     debug_file = output_dir / "debug.txt"
     assert debug_file.exists()
@@ -81,12 +88,12 @@ def test_cli_basic(runner: CliRunner, tmp_path: Path) -> None:
     """Test basic CLI functionality."""
     input_file = tmp_path / "test.mp3"
     input_file.touch()
-    
+
     with patch("audio2anki.cli.process_audio") as mock_process:
         mock_process.return_value = []
         with patch("audio2anki.cli.create_anki_deck") as mock_create_deck:
             mock_create_deck.return_value = tmp_path / "deck.txt"
-            
+
             result = runner.invoke(main, [str(input_file)])
             assert result.exit_code == 0
 
@@ -97,12 +104,12 @@ def test_cli_with_options(runner: CliRunner, tmp_path: Path) -> None:
     input_file.touch()
     transcript = tmp_path / "transcript.txt"
     transcript.touch()
-    
+
     with patch("audio2anki.cli.process_audio") as mock_process:
         mock_process.return_value = []
         with patch("audio2anki.cli.create_anki_deck") as mock_create_deck:
             mock_create_deck.return_value = tmp_path / "deck.txt"
-            
+
             result = runner.invoke(
                 main,
                 [
@@ -114,24 +121,28 @@ def test_cli_with_options(runner: CliRunner, tmp_path: Path) -> None:
                 ],
             )
             assert result.exit_code == 0
-            
+
             # Verify process_audio was called with correct arguments
             call_args = mock_process.call_args[0]
-            assert call_args[0] == input_file
-            assert call_args[1] == transcript
+            assert call_args[0] == input_file  # input_file
+            assert call_args[1] == transcript  # transcript_file
+            assert call_args[2] == Path("output")  # output_dir
             assert call_args[3] == "large"  # model
-            assert call_args[4] == "zh"     # language
-            assert call_args[7] == True     # debug
+            assert call_args[4] == ""  # target_language (empty since we used --language)
+            assert call_args[5] == 1.0  # min_length
+            assert call_args[6] == 15.0  # max_length
+            assert call_args[7] == -40  # silence_thresh
+            assert call_args[8] is True  # debug
 
 
 def test_cli_error_handling(runner: CliRunner, tmp_path: Path) -> None:
     """Test CLI error handling."""
     input_file = tmp_path / "test.mp3"
     input_file.touch()
-    
+
     with patch("audio2anki.cli.process_audio") as mock_process:
         mock_process.side_effect = Exception("Test error")
-        
+
         result = runner.invoke(main, [str(input_file)])
         assert result.exit_code != 0
         assert "Error: Test error" in result.output

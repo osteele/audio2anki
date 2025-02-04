@@ -20,6 +20,25 @@ Convert audio and video files into Anki flashcard decks with translations.
 - 📝 Optional manual transcript input
 - 🎴 Anki-ready output with embedded audio
 
+## System Requirements
+
+- Python 3.10 or higher
+- ffmpeg (for audio processing)
+
+On macOS, install ffmpeg using Homebrew:
+```bash
+brew install ffmpeg
+```
+
+On Ubuntu/Debian:
+```bash
+sudo apt-get install ffmpeg
+```
+
+On Windows:
+1. Install [Chocolatey](https://chocolatey.org/)
+2. Run: `choco install ffmpeg`
+
 ## Requirements
 
 - Python 3.10 or later
@@ -46,6 +65,29 @@ Use an existing transcript:
 export OPENAI_API_KEY=your-api-key-here
 audio2anki audio.mp3 --transcript transcript.txt
 ```
+
+### Audio Cleaning
+
+The tool can clean audio files to improve transcription quality:
+
+```bash
+audio2anki audio.mp3 --clean  # Force cleaning
+```
+
+Audio cleaning behavior:
+- With `--clean`: Always clean audio. Fails if `HF_TOKEN` is missing and no cached clean file exists
+- With `--no-clean`: Skip cleaning, even if cached clean files exist
+- Default (no flag): Clean if `HF_TOKEN` is present OR a cached clean file exists
+
+Cleaned files are cached in the same directory as the input file, with names like `original-name.cleaned-HASH.mp3`.
+
+**Large File Handling:**
+- Files larger than 25MB are automatically split into 5-minute segments
+- Each segment is cleaned separately and then recombined
+- If any segment fails to clean:
+  - With `--clean`: The entire process fails
+  - Without `--clean`: Falls back to using the original file
+- Cleaned files are cached to avoid reprocessing
 
 ### Common Use Cases
 
@@ -78,6 +120,8 @@ Options:
   --max-length SEC   Maximum segment length (default: 15.0)
   --language LANG    Source language (default: auto-detect)
   --silence-thresh DB Silence threshold (default: -40)
+  --clean            Force audio cleaning
+  --no-clean         Skip audio cleaning
 ```
 
 ### Environment Variables

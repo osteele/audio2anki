@@ -2,9 +2,11 @@
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import cast
 
-from openai import OpenAI
+import openai
+from openai import NotGiven, OpenAI
+from openai.types.audio import TranscriptionVerbose
 from rich.progress import Progress, TaskID
 
 from .models import AudioSegment
@@ -12,13 +14,28 @@ from .models import AudioSegment
 
 def load_transcript(file: Path) -> list[AudioSegment]:
     """Load transcript from file."""
+    import json
+
     segments = []
-    with open(file) as f:
-        for line in f:
-            parts = line.strip().split("\t")
-            if len(parts) >= 3:
-                start, end, text = float(parts[0]), float(parts[1]), parts[2]
-                segments.append(AudioSegment(start=start, end=end, text=text))
+    try:
+        with open(file) as f:
+            data = json.load(f)
+            for segment in data:
+                segments.append(
+                    AudioSegment(
+                        start=float(segment["start"]),
+                        end=float(segment["end"]),
+                        text=segment["text"],
+                    )
+                )
+    except json.JSONDecodeError:
+        # Try tab-separated format as fallback
+        with open(file) as f:
+            for line in f:
+                parts = line.strip().split("\t")
+                if len(parts) >= 3:
+                    start, end, text = float(parts[0]), float(parts[1]), parts[2]
+                    segments.append(AudioSegment(start=start, end=end, text=text))
     return segments
 
 
@@ -29,69 +46,59 @@ def transcribe_audio(
     task_id: TaskID,
     progress: Progress,
     language: str | None = None,
-    min_length: float | None = None,
-    max_length: float | None = None,
+    min_length: float = 0.0,
+    max_length: float = float("inf"),
 ) -> list[AudioSegment]:
-    """Transcribe audio using OpenAI Whisper API.
-    
-    Args:
-        audio_file: Path to audio file
-        transcript_path: Path to transcript file (optional)
-        model: Whisper model to use (e.g. "whisper-1")
-        task_id: Progress bar task ID
-        progress: Progress bar instance
-        language: Language code (e.g. "en", "zh", "ja")
-        min_length: Minimum segment length in seconds
-        max_length: Maximum segment length in seconds
-    """
-    if transcript_path and transcript_path.exists():
-        segments = load_transcript(transcript_path)
-        progress.update(task_id, completed=100)
-        return segments
-
+    """Transcribe audio file using OpenAI's Whisper model."""
     # Check for API key
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise ValueError("OPENAI_API_KEY environment variable not set")
 
-    # Initialize OpenAI client
-    client = OpenAI(api_key=api_key)
-    
-    # Update progress
-    progress.update(task_id, description="Transcribing audio with Whisper...")
+    # Create OpenAI client
+    client = OpenAI()
 
-    # Transcribe audio
-    with open(audio_file, "rb") as f:
-        response = client.audio.transcriptions.create(
-            file=f,
-            model=model,
-            language=language,
-            response_format="verbose_json",
-        )
+    try:
+        # Transcribe audio
+        with audio_file.open("rb") as file:
+            response = client.audio.transcriptions.create(
+                file=file,
+                model="whisper-1",
+                response_format="verbose_json",
+                language=language if language and language != "auto" else NotGiven(),
+            )
+        response = cast(TranscriptionVerbose, response)
 
-    # Process segments
-    segments = []
-    for segment in response.segments:
-        start = float(segment.start)
-        end = float(segment.end)
-        
-        # Apply length constraints if specified
-        if min_length and (end - start) < min_length:
-            continue
-        if max_length and (end - start) > max_length:
-            continue
-            
-        segments.append(AudioSegment(
-            start=start,
-            end=end,
-            text=segment.text.strip(),
-        ))
+        # Process segments
+        segments = []
+        if response.segments:
+            for segment in response.segments:
+                # Apply length filters
+                duration = segment.end - segment.start
+                if duration < min_length or duration > max_length:
+                    continue
 
-    # Save transcript if path provided
-    if transcript_path:
-        with open(transcript_path, "w") as f:
-            for segment in segments:
-                f.write(f"{segment.start}\t{segment.end}\t{segment.text}\n")
+                segments.append(
+                    AudioSegment(
+                        start=segment.start,
+                        end=segment.end,
+                        text=segment.text,
+                        translation=None,
+                        pronunciation=None,
+                        audio_file=None,
+                    )
+                )
 
-    progress.update(task_id, completed=100)
-    return segments
+        # Write transcript if requested
+        if transcript_path:
+            with open(transcript_path, "w") as f:
+                for segment in segments:
+                    f.write(f"{segment.text}\n")
+
+        progress.update(task_id, completed=100)
+        return segments
+
+    except openai.AuthenticationError:
+        raise  # Re-raise authentication errors directly
+    except Exception as e:
+        raise RuntimeError(f"Transcription failed: {str(e)}") from e

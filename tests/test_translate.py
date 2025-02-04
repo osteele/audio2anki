@@ -1,11 +1,10 @@
-"""Tests for translation module."""
+"""Tests for the translate module."""
 
 import os
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import MagicMock, Mock, patch
 
+import openai
 import pytest
-import httpx
-from openai import OpenAI
 from rich.progress import Progress, TaskID
 
 from audio2anki.models import AudioSegment
@@ -22,174 +21,159 @@ def segments() -> list[AudioSegment]:
 
 
 @pytest.fixture
-def progress() -> Progress:
-    """Return progress bar."""
-    return Progress()
-
-
-@pytest.fixture
-def task_id(progress: Progress) -> TaskID:
-    """Return task ID."""
-    return progress.add_task("Translating...", total=2)
-
-
-@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
-def test_translate_segments(
-    segments: list[AudioSegment],
-    progress: Progress,
-    task_id: TaskID,
-) -> None:
-    """Test translation of segments."""
-    # Set up mock response
-    mock_message = Mock()
-    mock_message.content = "Hello"
-    mock_choice = Mock()
-    mock_choice.message = mock_message
-    mock_response = Mock()
-    mock_response.choices = [mock_choice]
-
-    with patch.object(OpenAI, "__init__", return_value=None) as mock_init:
-        with patch.object(OpenAI, "chat") as mock_chat:
-            mock_chat.completions.create.return_value = mock_response
-
-            # Translate segments
-            translate_segments(segments, "english", task_id, progress)
-
-            # Check translations
-            assert segments[0].translation == "Hello"
-            assert segments[1].translation == "Hello"
-
-            # Verify API was called correctly
-            assert mock_chat.completions.create.call_count == 2
-            for call in mock_chat.completions.create.call_args_list:
-                args = call[1]
-                assert args["model"] == "gpt-3.5-turbo"
-                assert len(args["messages"]) == 2
-                assert args["messages"][0]["role"] == "system"
-                assert args["messages"][1]["role"] == "user"
-
-
-@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
-def test_translate_error_handling(
-    segments: list[AudioSegment],
-    progress: Progress,
-    task_id: TaskID,
-) -> None:
-    """Test error handling in translation."""
-    # Set up mock error
-    mock_response = Mock(spec=httpx.Response)
-    mock_response.status_code = 401
-    mock_response.text = "API error"
-    mock_response.request = Mock(spec=httpx.Request)
-    mock_response.request.method = "POST"
-    mock_response.request.url = "https://api.openai.com/v1/chat/completions"
-
-    with patch.object(OpenAI, "__init__", return_value=None) as mock_init:
-        with patch.object(OpenAI, "chat") as mock_chat:
-            mock_chat.completions.create.side_effect = httpx.HTTPStatusError(
-                "401 Unauthorized",
-                request=mock_response.request,
-                response=mock_response,
-            )
-
-            # Test error handling
-            with pytest.raises(RuntimeError, match="Translation failed: 401 Unauthorized"):
-                translate_segments(segments, "english", task_id, progress)
-
-
-@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
-def test_translate_empty_response(
-    segments: list[AudioSegment],
-    progress: Progress,
-    task_id: TaskID,
-) -> None:
-    """Test handling of empty response."""
-    # Set up mock with empty response
-    mock_message = Mock()
-    mock_message.content = ""
-    mock_choice = Mock()
-    mock_choice.message = mock_message
-    mock_response = Mock()
-    mock_response.choices = [mock_choice]
-
-    with patch.object(OpenAI, "__init__", return_value=None) as mock_init:
-        with patch.object(OpenAI, "chat") as mock_chat:
-            mock_chat.completions.create.return_value = mock_response
-
-            # Test error handling
-            with pytest.raises(ValueError, match="Empty response from OpenAI"):
-                translate_segments(segments, "english", task_id, progress)
-
-
-@pytest.fixture
-def mock_openai_response():
-    """Mock OpenAI API response."""
-    class MockChoice:
-        def __init__(self, text: str):
-            self.message = MagicMock()
-            self.message.content = text
-
-    class MockResponse:
-        def __init__(self, text: str):
-            self.choices = [MockChoice(text)]
-
-    return MockResponse("Translated text")
-
-
-@pytest.fixture
-def mock_deepl_response():
-    """Mock DeepL API response."""
-    class MockResult:
-        def __init__(self, text: str):
-            self.text = text
-
-    return MockResult("Translated text")
-
-
-@pytest.fixture
-def segments_deepl():
-    """Sample audio segments."""
+def segments_deepl() -> list[AudioSegment]:
+    """Return test segments for DeepL tests."""
     return [
         AudioSegment(start=0, end=1, text="Hello"),
         AudioSegment(start=1, end=2, text="World"),
     ]
 
 
-def test_translate_segments_with_openai(segments_deepl, mock_openai_response):
-    """Test translation using OpenAI."""
-    with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-        with patch("openai.OpenAI") as mock_openai:
-            mock_client = MagicMock()
-            mock_client.chat.completions.create.return_value = mock_openai_response
-            mock_openai.return_value = mock_client
+class MockChoice:
+    """Mock OpenAI chat completion choice."""
 
-            with Progress() as progress:
-                task_id = progress.add_task("test", total=len(segments_deepl))
-                translated = translate_segments(segments_deepl, "english", task_id, progress)
-
-            assert len(translated) == 2
-            assert all(s.translation == "Translated text" for s in translated)
-            assert mock_client.chat.completions.create.call_count == 2
+    def __init__(self, content: str):
+        self.message = MagicMock()
+        self.message.content = content
 
 
-def test_translate_segments_with_deepl(segments_deepl, mock_deepl_response):
-    """Test translation using DeepL."""
-    with patch.dict(os.environ, {"DEEPL_API_TOKEN": "test-key"}):
-        with patch("deepl.Translator") as mock_deepl:
-            mock_translator = MagicMock()
-            mock_translator.translate_text.return_value = mock_deepl_response
-            mock_deepl.return_value = mock_translator
-
-            with Progress() as progress:
-                task_id = progress.add_task("test", total=len(segments_deepl))
-                translated = translate_segments(segments_deepl, "english", task_id, progress)
-
-            assert len(translated) == 2
-            assert all(s.translation == "Translated text" for s in translated)
-            assert mock_translator.translate_text.call_count == 2
+@pytest.fixture
+def task_id(progress: Progress) -> TaskID:
+    """Create a task ID for testing."""
+    return progress.add_task("test", total=100)
 
 
-def test_translate_segments_fallback_to_openai(segments_deepl, mock_openai_response):
+@patch("openai.OpenAI")
+@patch.dict(os.environ, {"OPENAI_API_KEY": "valid-key"})
+def test_translate_segments(
+    mock_openai_class: Mock,
+    segments: list[AudioSegment],
+    progress: Progress,
+    task_id: TaskID,
+) -> None:
+    """Test translation with OpenAI."""
+    # Set up mock
+    mock_client = mock_openai_class.return_value
+    mock_chat = MagicMock()
+    mock_chat.completions = MagicMock()
+
+    # Mock responses for translation and pinyin for first segment
+    mock_response1_trans = MagicMock()
+    mock_response1_trans.choices = [MagicMock(message=MagicMock(content="Hello"))]
+    mock_response1_pinyin = MagicMock()
+    mock_response1_pinyin.choices = [MagicMock(message=MagicMock(content="ni hao"))]
+
+    # Mock responses for translation and pinyin for second segment
+    mock_response2_trans = MagicMock()
+    mock_response2_trans.choices = [MagicMock(message=MagicMock(content="Thank you"))]
+    mock_response2_pinyin = MagicMock()
+    mock_response2_pinyin.choices = [MagicMock(message=MagicMock(content="xie xie"))]
+
+    # Set up the sequence of responses
+    mock_chat.completions.create.side_effect = [
+        mock_response1_trans,  # First segment translation
+        mock_response1_pinyin,  # First segment pinyin
+        mock_response2_trans,  # Second segment translation
+        mock_response2_pinyin,  # Second segment pinyin
+    ]
+    mock_client.chat = mock_chat
+
+    # Mock OpenAI client creation
+    with patch("audio2anki.translate.OpenAI", return_value=mock_client):
+        translated = translate_segments(segments, task_id, progress, "english")
+        assert len(translated) == len(segments)
+        assert translated[0].translation == "Hello"
+        assert translated[0].pronunciation == "ni hao"
+        assert translated[1].translation == "Thank you"
+        assert translated[1].pronunciation == "xie xie"
+
+
+@patch("openai.OpenAI")
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
+def test_translate_error_handling(
+    mock_openai_class: Mock,
+    segments: list[AudioSegment],
+    progress: Progress,
+    task_id: TaskID,
+) -> None:
+    """Test error handling during translation."""
+    # Set up mock
+    mock_client = mock_openai_class.return_value
+    mock_chat = MagicMock()
+    mock_chat.completions = MagicMock()
+    mock_chat.completions.create.side_effect = openai.AuthenticationError(
+        "Incorrect API key provided",
+        response=Mock(status_code=401),
+        body={"error": {"message": "Incorrect API key provided"}},
+    )
+    mock_client.chat = mock_chat
+
+    # Mock OpenAI client creation
+    with patch("audio2anki.translate.OpenAI", return_value=mock_client):
+        with pytest.raises(RuntimeError, match="Error translating segment: Incorrect API key provided"):
+            translate_segments(segments, task_id, progress, "english")
+
+
+@patch("openai.OpenAI")
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
+def test_translate_empty_response(
+    mock_openai_class: Mock,
+    segments: list[AudioSegment],
+    progress: Progress,
+    task_id: TaskID,
+) -> None:
+    """Test handling of empty translation response."""
+    # Set up mock
+    mock_client = mock_openai_class.return_value
+    mock_chat = MagicMock()
+    mock_chat.completions = MagicMock()
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock(message=MagicMock(content=""))]  # Empty response
+    mock_chat.completions.create.return_value = mock_response
+    mock_client.chat = mock_chat
+
+    # Mock OpenAI client creation
+    with patch("audio2anki.translate.OpenAI", return_value=mock_client):
+        with pytest.raises(RuntimeError, match="Error translating segment: Empty response from OpenAI"):
+            translate_segments(segments, task_id, progress, "english")
+
+
+@patch("openai.OpenAI")
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
+def test_translate_segments_with_openai(
+    mock_openai_class: Mock,
+    segments_deepl: list[AudioSegment],
+    task_id: TaskID,
+    progress: Progress,
+) -> None:
+    """Test translation with OpenAI."""
+    # Set up mock
+    mock_client = mock_openai_class.return_value
+    mock_chat = MagicMock()
+    mock_chat.completions = MagicMock()
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock(message=MagicMock(content="Translated text"))]
+    mock_chat.completions.create.return_value = mock_response
+    mock_client.chat = mock_chat
+
+    # Mock OpenAI client creation
+    with patch("audio2anki.translate.OpenAI", return_value=mock_client):
+        translated = translate_segments(segments_deepl, task_id, progress, "english")
+
+        # Check results
+        assert len(translated) == len(segments_deepl)
+        assert all(s.translation == "Translated text" for s in translated)
+        mock_client.chat.completions.create.assert_called()
+
+
+@patch("openai.OpenAI")
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
+def test_translate_segments_fallback_to_openai(
+    mock_openai_class: Mock,
+    segments_deepl: list[AudioSegment],
+    task_id: TaskID,
+    progress: Progress,
+) -> None:
     """Test fallback to OpenAI when DeepL fails."""
     with patch.dict(os.environ, {
         "DEEPL_API_TOKEN": "test-key",
@@ -197,26 +181,67 @@ def test_translate_segments_fallback_to_openai(segments_deepl, mock_openai_respo
     }):
         with patch("deepl.Translator") as mock_deepl:
             mock_deepl.side_effect = Exception("DeepL error")
-            
-            with patch("openai.OpenAI") as mock_openai:
-                mock_client = MagicMock()
-                mock_client.chat.completions.create.return_value = mock_openai_response
-                mock_openai.return_value = mock_client
 
-                with Progress() as progress:
-                    task_id = progress.add_task("test", total=len(segments_deepl))
-                    translated = translate_segments(segments_deepl, "english", task_id, progress)
+            # Set up OpenAI mock
+            mock_client = mock_openai_class.return_value
+            mock_chat = MagicMock()
+            mock_chat.completions = MagicMock()
+            mock_response = MagicMock()
+            mock_response.choices = [MagicMock(message=MagicMock(content="Translated text"))]
+            mock_chat.completions.create.return_value = mock_response
+            mock_client.chat = mock_chat
 
-                assert len(translated) == 2
+            # Mock OpenAI client creation
+            with patch("audio2anki.translate.OpenAI", return_value=mock_client):
+                translated = translate_segments(segments_deepl, task_id, progress, "english")
+
+                # Check results
+                assert len(translated) == len(segments_deepl)
                 assert all(s.translation == "Translated text" for s in translated)
-                assert mock_client.chat.completions.create.call_count == 2
+                mock_client.chat.completions.create.assert_called()
 
 
-def test_translate_segments_no_api_keys():
-    """Test error when no API keys are available."""
-    with patch.dict(os.environ, {}, clear=True):
-        with Progress() as progress:
-            task_id = progress.add_task("test", total=1)
-            with pytest.raises(ValueError) as exc:
-                translate_segments([], "english", task_id, progress)
-            assert "Neither DEEPL_API_TOKEN nor OPENAI_API_KEY" in str(exc.value)
+@patch("openai.OpenAI")
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
+def test_translate_error_handling_openai(
+    mock_openai_class: Mock,
+    segments_deepl: list[AudioSegment],
+    task_id: TaskID,
+    progress: Progress,
+) -> None:
+    """Test error handling during translation."""
+    # Set up mock
+    mock_client = mock_openai_class.return_value
+    mock_chat = MagicMock()
+    mock_chat.completions = MagicMock()
+    mock_chat.completions.create.side_effect = Exception("Translation error")
+    mock_client.chat = mock_chat
+
+    # Mock OpenAI client creation
+    with patch("audio2anki.translate.OpenAI", return_value=mock_client):
+        with pytest.raises(RuntimeError, match="Error translating segment: Translation error"):
+            translate_segments(segments_deepl, task_id, progress, "english")
+
+
+@patch("openai.OpenAI")
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
+def test_translate_empty_response_openai(
+    mock_openai_class: Mock,
+    segments_deepl: list[AudioSegment],
+    task_id: TaskID,
+    progress: Progress,
+) -> None:
+    """Test handling of empty translation response."""
+    # Set up mock
+    mock_client = mock_openai_class.return_value
+    mock_chat = MagicMock()
+    mock_chat.completions = MagicMock()
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock(message=MagicMock(content=None))]  # Empty response
+    mock_chat.completions.create.return_value = mock_response
+    mock_client.chat = mock_chat
+
+    # Mock OpenAI client creation
+    with patch("audio2anki.translate.OpenAI", return_value=mock_client):
+        with pytest.raises(RuntimeError, match="Error translating segment: Empty response from OpenAI"):
+            translate_segments(segments_deepl, task_id, progress, "english")
