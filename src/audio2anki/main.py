@@ -42,6 +42,15 @@ class Stage:
 
 
 @dataclass
+class PipelineOptions:
+    """Options that control pipeline behavior."""
+
+    bypass_cache: bool = False
+    clear_cache: bool = False
+    debug: bool = False
+
+
+@dataclass
 class PipelineProgress:
     """Manages progress tracking for the pipeline and its stages."""
 
@@ -120,6 +129,7 @@ class Pipeline:
     """Audio processing pipeline that manages and executes stages."""
 
     stages: list[Stage] = field(default_factory=list)
+    options: PipelineOptions = field(default_factory=PipelineOptions)
 
     def add_stage(self, stage: Stage) -> None:
         """Add a stage to the pipeline."""
@@ -127,11 +137,19 @@ class Pipeline:
 
     def run(self, input_data: Any) -> Any:
         """Execute all stages in the pipeline."""
+        if self.options.clear_cache:
+            from . import cache
+            cache.clear_cache()
+            logging.info("Cache cleared")
+
         with PipelineProgress.create(self.stages) as progress:
             current_data = input_data
             for stage in self.stages:
                 try:
                     progress.start_stage(stage.name)
+                    # Add bypass_cache to stage params if specified
+                    if self.options.bypass_cache:
+                        stage.params["bypass_cache"] = True
                     current_data = stage.process(current_data, progress, **stage.params)
                     progress.complete_stage()
                 except Exception as e:
@@ -183,9 +201,9 @@ def generate_deck(input_data: str | Path, progress: PipelineProgress, **kwargs: 
     # Placeholder: In a real implementation, create directory structure with deck.txt, etc.
 
 
-def create_pipeline() -> Pipeline:
+def create_pipeline(options: PipelineOptions) -> Pipeline:
     """Create and configure the audio processing pipeline."""
-    pipeline = Pipeline()
+    pipeline = Pipeline(options=options)
 
     # Add stages in order
     pipeline.add_stage(Stage("transcode", "Transcoding audio", transcode))
@@ -197,18 +215,66 @@ def create_pipeline() -> Pipeline:
     return pipeline
 
 
-@click.command()
+@click.group(invoke_without_command=True)
+@click.pass_context
+def cli(ctx: click.Context) -> None:
+    """Audio2Anki - Generate Anki cards from audio files."""
+    # If no command is specified, show help
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
+
+
+@cli.command(name="process", help="Process an audio/video file (default command)")
 @click.argument("input_file", type=click.Path(exists=True))
 @click.option("--debug", is_flag=True, help="Enable debug output")
-def main(input_file: str, debug: bool) -> None:
+@click.option("--bypass-cache", is_flag=True, help="Bypass the cache and force recomputation")
+@click.option("--clear-cache", is_flag=True, help="Clear the cache before starting")
+def process_command(input_file: str, debug: bool = False, bypass_cache: bool = False, clear_cache: bool = False) -> None:
     """Process an audio/video file and generate Anki flashcards."""
     if debug:
         logging.getLogger().setLevel(logging.DEBUG)
         logging.debug("Debug mode enabled.")
 
+    # Initialize cache system
+    from . import cache
+    if clear_cache:
+        cache.clear_cache()
+    cache.init_cache(bypass=bypass_cache)
+
     # Create and run the pipeline
-    pipeline = create_pipeline()
+    options = PipelineOptions(debug=debug)
+    pipeline = create_pipeline(options)
     pipeline.run(input_file)
+
+
+@cli.command()
+def paths() -> None:
+    """Show locations of configuration and cache files."""
+    from . import config
+
+    paths = config.get_app_paths()
+    console.print("\n[bold]Application Paths:[/]")
+    for name, path in paths.items():
+        exists = path.exists()
+        status = "[green]exists[/]" if exists else "[yellow]not created yet[/]"
+        console.print(f"  [cyan]{name}[/]: {path} ({status})")
+    console.print()
+
+
+def main() -> None:
+    """CLI entry point."""
+    # If no arguments, show help
+    import sys
+    if len(sys.argv) == 1:
+        cli.main(['--help'])
+        return
+
+    # If first arg is a file, treat it as the process command
+    if len(sys.argv) > 1 and not sys.argv[1].startswith('-') and not sys.argv[1] in ['paths', 'process']:
+        # Insert 'process' command before the file argument
+        sys.argv.insert(1, 'process')
+
+    cli()
 
 
 if __name__ == "__main__":
