@@ -44,7 +44,7 @@ lint.select = [
 known-first-party = ["audio2anki"]
 
 [project.scripts]
-audio2anki = "audio2anki.cli:main"
+audio2anki = "audio2anki.main:main"
 
 [tool.pytest.ini_options]
 addopts = "-ra -q"

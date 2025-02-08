@@ -23,3 +23,6 @@ test *ARGS:
 # Install the package in development mode
 install:
     uv pip install -e ".[dev]"
+
+run *ARGS:
+    uv run audio2anki {{ARGS}}
