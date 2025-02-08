@@ -10,7 +10,7 @@ from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn, TimeRemainingColumn
 
 from .anki import create_anki_deck
-from .audio import split_audio
+from .audio_utils import split_audio
 from .models import AudioSegment
 from .transcribe import transcribe_audio
 from .translate import translate_segments

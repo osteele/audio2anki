@@ -43,6 +43,9 @@ lint.select = [
 [tool.ruff.lint.isort]
 known-first-party = ["audio2anki"]
 
+[tool.pyright]
+reportIncompatibleMethodOverride = "none"
+
 [project.scripts]
 audio2anki = "audio2anki.main:main"
 
