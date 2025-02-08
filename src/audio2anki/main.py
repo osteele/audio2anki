@@ -1,6 +1,11 @@
+"""Main entry point for audio2anki."""
+
 import logging
 import os
-from dataclasses import dataclass
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable, Protocol
 
 import click
 from rich.console import Console
@@ -18,27 +23,35 @@ from rich.progress import (
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 console = Console()
 
-# Configuration defaults
-DEFAULT_CONFIG = {
-    "clean_files": True,
-    "use_cache": True,
-    "cache_expiry_days": 7,
-    "voice_isolation_provider": "eleven_labs",
-    "transcription_provider": "openai_whisper",
-}
+
+class StageFunction(Protocol):
+    """Type protocol for stage processing functions."""
+
+    def __call__(self, input_data: Any, progress: "PipelineProgress", **kwargs: Any) -> Any: ...
+
+
+@dataclass
+class Stage:
+    """A single stage in the audio processing pipeline."""
+
+    name: str
+    description: str
+    process: StageFunction
+    params: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class PipelineProgress:
     """Manages progress tracking for the pipeline and its stages."""
 
-    progress: Progress  # Rich Progress instance
+    progress: Progress
     pipeline_task: TaskID
-    current_stage: TaskID | None = None
+    stage_tasks: dict[str, TaskID] = field(default_factory=dict)
+    current_stage: str | None = None
 
     @classmethod
-    def create(cls) -> "PipelineProgress":
-        """Create a new pipeline progress tracker."""
+    def create(cls, stages: list[Stage]) -> "PipelineProgress":
+        """Create a new pipeline progress tracker with pre-allocated tasks for all stages."""
         progress = Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -47,8 +60,15 @@ class PipelineProgress:
             TimeRemainingColumn(),
             console=console,
         )
-        pipeline_task = progress.add_task("[bold blue]Processing audio file...", total=5)
-        return cls(progress=progress, pipeline_task=pipeline_task)
+        pipeline_task = progress.add_task("[bold blue]Processing audio file...", total=len(stages))
+
+        # Pre-create tasks for all stages
+        stage_tasks = {}
+        for stage in stages:
+            task_id = progress.add_task(f"  [cyan]{stage.description}...", total=100, start=False)
+            stage_tasks[stage.name] = task_id
+
+        return cls(progress=progress, pipeline_task=pipeline_task, stage_tasks=stage_tasks)
 
     def __enter__(self) -> "PipelineProgress":
         """Start the progress display when entering the context."""
@@ -59,127 +79,105 @@ class PipelineProgress:
         """Stop the progress display when exiting the context."""
         self.progress.stop()
 
-    def start_stage(self, description: str) -> TaskID:
-        """Start a new pipeline stage."""
-        self.current_stage = self.progress.add_task(f"  [cyan]{description}...", total=100)
-        return self.current_stage
+    def start_stage(self, stage_name: str) -> None:
+        """Start a pipeline stage."""
+        self.current_stage = stage_name
+        task_id = self.stage_tasks[stage_name]
+        self.progress.start_task(task_id)
 
     def update_stage(self, completed: float) -> None:
         """Update the current stage's progress."""
-        if self.current_stage is not None:
-            self.progress.update(self.current_stage, completed=completed)
+        if self.current_stage:
+            task_id = self.stage_tasks[self.current_stage]
+            self.progress.update(task_id, completed=completed)
 
     def complete_stage(self) -> None:
         """Mark the current stage as complete and advance the pipeline."""
-        if self.current_stage is not None:
-            self.progress.update(self.current_stage, completed=100)
+        if self.current_stage:
+            task_id = self.stage_tasks[self.current_stage]
+            self.progress.update(task_id, completed=100)
             self.progress.advance(self.pipeline_task)
             self.current_stage = None
 
 
-def load_config() -> dict[str, bool | int | str]:
-    """Load configuration from $HOME/.config/audio2anki/config.toml and return a config dictionary."""
-    config_path = os.path.join(os.environ.get("HOME", "."), ".config", "audio2anki", "config.toml")
-    config = DEFAULT_CONFIG.copy()
-    try:
-        with open(config_path) as f:
-            # For now, we use a simple parsing: ignore comments and simple key = value pairs
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    if "=" in line:
-                        key, value = line.split("=", 1)
-                        key = key.strip()
-                        value = value.strip().strip('"').strip("'")
-                        # A simple conversion: if value is a digit, convert to int, else leave as string or bool
-                        if value.lower() in ["true", "false"]:
-                            config[key] = value.lower() == "true"
-                        elif value.isdigit():
-                            config[key] = int(value)
-                        else:
-                            config[key] = value
-    except FileNotFoundError:
-        logging.info(f"Config file not found at {config_path}. Using default configuration.")
-    return config
+@dataclass
+class Pipeline:
+    """Audio processing pipeline that manages and executes stages."""
+
+    stages: list[Stage] = field(default_factory=list)
+
+    def add_stage(self, stage: Stage) -> None:
+        """Add a stage to the pipeline."""
+        self.stages.append(stage)
+
+    def run(self, input_data: Any) -> Any:
+        """Execute all stages in the pipeline."""
+        with PipelineProgress.create(self.stages) as progress:
+            current_data = input_data
+            for stage in self.stages:
+                try:
+                    progress.start_stage(stage.name)
+                    current_data = stage.process(current_data, progress, **stage.params)
+                    progress.complete_stage()
+                except Exception as e:
+                    logging.error(f"Error in stage '{stage.name}': {str(e)}")
+                    console.print(f"[red]Pipeline failed at stage: {stage.name}[/]")
+                    console.print(f"[red]Error: {str(e)}[/]")
+                    sys.exit(1)
+            return current_data
 
 
-def init_cache() -> str:
-    """Ensure the cache directory exists and return its path."""
-    cache_dir = os.path.join(os.environ.get("HOME", "."), ".cache", "audio2anki")
-    if not os.path.exists(cache_dir):
-        os.makedirs(cache_dir, exist_ok=True)
-        logging.info(f"Cache directory created at {cache_dir}")
-    else:
-        logging.info(f"Cache directory exists at {cache_dir}")
-    return cache_dir
-
-
-def transcode(input_file: str, pipeline: "PipelineProgress") -> str:
+def transcode(input_data: str | Path, progress: PipelineProgress, **kwargs: Any) -> str:
     """Transcode an audio/video file to an audio file suitable for processing."""
-    pipeline.start_stage("Transcoding audio")
     # Simulate transcoding progress
-    pipeline.update_stage(50)  # In real implementation, update based on ffmpeg progress
+    progress.update_stage(50)  # In real implementation, update based on ffmpeg progress
     # Placeholder: In a real implementation, call ffmpeg to extract audio
-    audio_file = input_file + ".audio.mp3"
-    pipeline.complete_stage()
-    return audio_file
+    return str(input_data) + ".audio.mp3"
 
 
-def voice_isolation(audio_file: str, pipeline: "PipelineProgress") -> str:
+def voice_isolation(input_data: str | Path, progress: PipelineProgress, **kwargs: Any) -> str:
     """Perform voice isolation using the selected provider."""
-    pipeline.start_stage("Isolating voice using Eleven Labs API")
     # Simulate API call progress
-    pipeline.update_stage(50)  # In real implementation, update based on API progress
+    progress.update_stage(50)  # In real implementation, update based on API progress
     # Placeholder: In a real implementation, call the Eleven Labs API
-    cleaned_audio = audio_file.replace(".audio.mp3", ".cleaned.mp3")
-    pipeline.complete_stage()
-    return cleaned_audio
+    return str(input_data).replace(".audio.mp3", ".cleaned.mp3")
 
 
-def transcribe(audio_file: str, pipeline: "PipelineProgress") -> str:
+def transcribe(input_data: str | Path, progress: PipelineProgress, **kwargs: Any) -> str:
     """Transcribe the audio file using OpenAI Whisper and produce an SRT file."""
-    pipeline.start_stage("Transcribing with OpenAI Whisper")
     # Simulate transcription progress
-    pipeline.update_stage(50)  # In real implementation, update based on Whisper progress
+    progress.update_stage(50)  # In real implementation, update based on Whisper progress
     # Placeholder: In a real implementation, call OpenAI Whisper
-    srt_file = audio_file.replace(".cleaned.mp3", ".srt")
-    pipeline.complete_stage()
-    return srt_file
+    return str(input_data).replace(".cleaned.mp3", ".srt")
 
 
-def sentence_selection(transcript: str, pipeline: "PipelineProgress") -> str:
+def sentence_selection(input_data: str | Path, progress: PipelineProgress, **kwargs: Any) -> str:
     """Process the transcript to perform sentence selection."""
-    pipeline.start_stage("Selecting sentences")
     # Simulate selection progress
-    pipeline.update_stage(50)  # In real implementation, update based on actual progress
+    progress.update_stage(50)  # In real implementation, update based on actual progress
     # Placeholder: In a real implementation, apply sentence splitting/filtering
-    selected_transcript = transcript.replace(".srt", ".selected.txt")
-    pipeline.complete_stage()
-    return selected_transcript
+    return str(input_data).replace(".srt", ".selected.txt")
 
 
-def generate_deck(processed_data: str, pipeline: "PipelineProgress") -> None:
+def generate_deck(input_data: str | Path, progress: PipelineProgress, **kwargs: Any) -> None:
     """Generate an Anki flashcard deck from the processed data."""
-    pipeline.start_stage("Generating Anki deck")
     # Simulate deck generation progress
-    pipeline.update_stage(50)  # In real implementation, update based on actual progress
+    progress.update_stage(50)  # In real implementation, update based on actual progress
     # Placeholder: In a real implementation, create directory structure with deck.txt, etc.
-    pipeline.complete_stage()
 
 
-def run_pipeline(input_file: str) -> None:
-    """Run the entire pipeline for the given input file."""
-    with PipelineProgress.create() as pipeline:
-        # Transcode input file
-        audio_file = transcode(input_file, pipeline)
-        # Voice Isolation
-        cleaned_audio = voice_isolation(audio_file, pipeline)
-        # Transcription
-        srt_file = transcribe(cleaned_audio, pipeline)
-        # Optional Sentence Selection
-        processed_transcript = sentence_selection(srt_file, pipeline)
-        # Card Deck Generation
-        generate_deck(processed_transcript, pipeline)
+def create_pipeline() -> Pipeline:
+    """Create and configure the audio processing pipeline."""
+    pipeline = Pipeline()
+
+    # Add stages in order
+    pipeline.add_stage(Stage("transcode", "Transcoding audio", transcode))
+    pipeline.add_stage(Stage("voice_isolation", "Isolating voice using Eleven Labs API", voice_isolation))
+    pipeline.add_stage(Stage("transcribe", "Transcribing with OpenAI Whisper", transcribe))
+    pipeline.add_stage(Stage("sentence_selection", "Selecting sentences", sentence_selection))
+    pipeline.add_stage(Stage("generate_deck", "Generating Anki deck", generate_deck))
+
+    return pipeline
 
 
 @click.command()
@@ -191,14 +189,9 @@ def main(input_file: str, debug: bool) -> None:
         logging.getLogger().setLevel(logging.DEBUG)
         logging.debug("Debug mode enabled.")
 
-    config = load_config()
-    cache_dir = init_cache()
-
-    if debug:
-        console.print(f"[blue]Loaded configuration:[/] {config}")
-        console.print(f"[blue]Using cache directory:[/] {cache_dir}")
-
-    run_pipeline(input_file)
+    # Create and run the pipeline
+    pipeline = create_pipeline()
+    pipeline.run(input_file)
 
 
 if __name__ == "__main__":
