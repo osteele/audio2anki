@@ -60,6 +60,17 @@ def get_config_path() -> Path:
     return Path(CONFIG_DIR) / CONFIG_FILE
 
 
+def get_app_paths() -> dict[str, Path]:
+    """Get all application paths."""
+    from . import cache  # Import here to avoid circular imports
+
+    return {
+        "config_dir": Path(CONFIG_DIR),
+        "config_file": Path(CONFIG_DIR) / CONFIG_FILE,
+        "cache_dir": Path(cache.CACHE_DIR),
+    }
+
+
 def ensure_config_dir() -> None:
     """Ensure the configuration directory exists."""
     os.makedirs(CONFIG_DIR, exist_ok=True)
@@ -122,7 +133,7 @@ def validate_config(config: Config) -> list[str]:
     Returns:
         list[str]: List of validation error messages. Empty if valid.
     """
-    errors = []
+    errors: list[str] = []
 
     # Validate cache expiry days
     if config.cache_expiry_days < 1:
