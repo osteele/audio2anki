@@ -1,11 +1,10 @@
 """Main entry point for audio2anki."""
 
 import logging
-import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 import click
 from rich.console import Console
@@ -18,6 +17,8 @@ from rich.progress import (
     TextColumn,
     TimeRemainingColumn,
 )
+
+from .transcoder import transcode_audio
 
 # Setup basic logging configuration
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
@@ -65,7 +66,11 @@ class PipelineProgress:
         # Pre-create tasks for all stages
         stage_tasks = {}
         for stage in stages:
-            task_id = progress.add_task(f"  [cyan]{stage.description}...", total=100, start=False)
+            task_id = progress.add_task(
+                f"[cyan]{stage.description}",
+                total=100,
+                visible=False,
+            )
             stage_tasks[stage.name] = task_id
 
         return cls(progress=progress, pipeline_task=pipeline_task, stage_tasks=stage_tasks)
@@ -77,13 +82,23 @@ class PipelineProgress:
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """Stop the progress display when exiting the context."""
+        if self.current_stage:
+            task_id = self.stage_tasks[self.current_stage]
+            self.progress.update(task_id, visible=False)
         self.progress.stop()
 
     def start_stage(self, stage_name: str) -> None:
         """Start a pipeline stage."""
+        # Hide previous stage if exists
+        if self.current_stage:
+            prev_task_id = self.stage_tasks[self.current_stage]
+            self.progress.update(prev_task_id, visible=False)
+
+        # Show and start new stage
         self.current_stage = stage_name
         task_id = self.stage_tasks[stage_name]
-        self.progress.start_task(task_id)
+        self.progress.reset(task_id)
+        self.progress.update(task_id, visible=True, completed=0)
 
     def update_stage(self, completed: float) -> None:
         """Update the current stage's progress."""
@@ -129,10 +144,12 @@ class Pipeline:
 
 def transcode(input_data: str | Path, progress: PipelineProgress, **kwargs: Any) -> str:
     """Transcode an audio/video file to an audio file suitable for processing."""
-    # Simulate transcoding progress
-    progress.update_stage(50)  # In real implementation, update based on ffmpeg progress
-    # Placeholder: In a real implementation, call ffmpeg to extract audio
-    return str(input_data) + ".audio.mp3"
+    try:
+        output_path = transcode_audio(input_data, progress_callback=progress.update_stage, **kwargs)
+        return str(output_path)
+    except Exception as e:
+        logging.error(f"Transcoding failed: {e}")
+        raise
 
 
 def voice_isolation(input_data: str | Path, progress: PipelineProgress, **kwargs: Any) -> str:
