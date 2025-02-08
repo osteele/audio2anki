@@ -48,7 +48,7 @@ def trim_silence(audio: PydubSegment, min_silence_len: int = 100, silence_thresh
 
     # Return the trimmed audio segment
     trimmed = audio[start_trim:end_trim]
-    return trimmed if isinstance(trimmed, PydubSegment) else next(trimmed)
+    return trimmed
 
 
 def split_audio(
