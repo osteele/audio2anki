@@ -63,13 +63,13 @@ def transcode_audio(
     if cached_result:
         # Get the path from the cache metadata
         cached_path = cache.get_cache_path("transcode", cache.compute_file_hash(input_path), f".{target_format}")
-        logger.info(f"Using cached transcoded file: {cached_path}")
+        logger.debug(f"Using cached transcoded file: {cached_path}")
         update_progress(100)  # Cache hit is immediate completion
         return Path(cached_path)
 
     try:
         # Load the audio file
-        logger.info(f"Loading audio file: {input_path}")
+        logger.debug(f"Loading audio file: {input_path}")
         update_progress(10)  # Loading started
 
         audio = AudioSegment.from_file(str(input_path))
@@ -91,7 +91,7 @@ def transcode_audio(
             temp_path = Path(temp_file.name)
 
             # Export the processed audio
-            logger.info(f"Exporting processed audio to temporary file: {temp_path}")
+            logger.debug(f"Exporting processed audio to temporary file: {temp_path}")
             export_params: dict[str, Any] = {
                 "format": target_format,
                 "parameters": ["-b:a", target_bitrate],  # Pass bitrate as ffmpeg parameter

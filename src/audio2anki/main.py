@@ -21,8 +21,13 @@ from rich.progress import (
 from .transcoder import transcode_audio
 
 # Setup basic logging configuration
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 console = Console()
+
+
+def configure_logging(debug: bool = False) -> None:
+    """Configure logging based on debug flag."""
+    level = logging.DEBUG if debug else logging.WARNING
+    logging.basicConfig(level=level, format='%(message)s')
 
 
 class StageFunction(Protocol):
@@ -231,9 +236,7 @@ def cli(ctx: click.Context) -> None:
 @click.option("--clear-cache", is_flag=True, help="Clear the cache before starting")
 def process_command(input_file: str, debug: bool = False, bypass_cache: bool = False, clear_cache: bool = False) -> None:
     """Process an audio/video file and generate Anki flashcards."""
-    if debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-        logging.debug("Debug mode enabled.")
+    configure_logging(debug)
 
     # Initialize cache system
     from . import cache
@@ -250,6 +253,7 @@ def process_command(input_file: str, debug: bool = False, bypass_cache: bool = F
 @cli.command()
 def paths() -> None:
     """Show locations of configuration and cache files."""
+    configure_logging()
     from . import config
 
     paths = config.get_app_paths()
