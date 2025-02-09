@@ -5,12 +5,12 @@ description = "Convert audio and video files into Anki flashcard decks with tran
 authors = [{ name = "Oliver Steele", email = "steele@osteele.com" }]
 dependencies = [
     "click>=8.1.7",
+    "httpx>=0.26.0",  # For Eleven Labs API
     "rich>=13.7.0",
     "openai>=1.8.0",
     "pydub>=0.25.1",
     "deepl>=1.16.1",
     "gradio-client>=0.10.1",
-    "pydub>=0.25.1"
 ]
 requires-python = ">=3.10"
 

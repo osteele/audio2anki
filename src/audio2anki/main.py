@@ -27,7 +27,7 @@ console = Console()
 def configure_logging(debug: bool = False) -> None:
     """Configure logging based on debug flag."""
     level = logging.DEBUG if debug else logging.WARNING
-    logging.basicConfig(level=level, format='%(message)s')
+    logging.basicConfig(level=level, format="%(message)s")
 
 
 class StageFunction(Protocol):
@@ -144,6 +144,7 @@ class Pipeline:
         """Execute all stages in the pipeline."""
         if self.options.clear_cache:
             from . import cache
+
             cache.clear_cache()
             logging.info("Cache cleared")
 
@@ -175,12 +176,15 @@ def transcode(input_data: str | Path, progress: PipelineProgress, **kwargs: Any)
         raise
 
 
-def voice_isolation(input_data: str | Path, progress: PipelineProgress, **kwargs: Any) -> str:
-    """Perform voice isolation using the selected provider."""
-    # Simulate API call progress
-    progress.update_stage(50)  # In real implementation, update based on API progress
-    # Placeholder: In a real implementation, call the Eleven Labs API
-    return str(input_data).replace(".audio.mp3", ".cleaned.mp3")
+def voice_isolation(input_data: Any, progress: PipelineProgress, **kwargs: Any) -> Path:
+    """Isolate voice from background noise."""
+    from .voice_isolation import VoiceIsolationError, isolate_voice
+
+    try:
+        return isolate_voice(input_data, progress.update_stage)
+    except VoiceIsolationError as e:
+        console.print(f"[red]Voice isolation failed: {e}[/]")
+        sys.exit(1)
 
 
 def transcribe(input_data: str | Path, progress: PipelineProgress, **kwargs: Any) -> str:
@@ -212,7 +216,7 @@ def create_pipeline(options: PipelineOptions) -> Pipeline:
 
     # Add stages in order
     pipeline.add_stage(Stage("transcode", "Transcoding audio", transcode))
-    pipeline.add_stage(Stage("voice_isolation", "Isolating voice using Eleven Labs API", voice_isolation))
+    pipeline.add_stage(Stage("voice_isolation", "Isolating voice with Eleven Labs API", voice_isolation))
     pipeline.add_stage(Stage("transcribe", "Transcribing with OpenAI Whisper", transcribe))
     pipeline.add_stage(Stage("sentence_selection", "Selecting sentences", sentence_selection))
     pipeline.add_stage(Stage("generate_deck", "Generating Anki deck", generate_deck))
@@ -234,12 +238,15 @@ def cli(ctx: click.Context) -> None:
 @click.option("--debug", is_flag=True, help="Enable debug output")
 @click.option("--bypass-cache", is_flag=True, help="Bypass the cache and force recomputation")
 @click.option("--clear-cache", is_flag=True, help="Clear the cache before starting")
-def process_command(input_file: str, debug: bool = False, bypass_cache: bool = False, clear_cache: bool = False) -> None:
+def process_command(
+    input_file: str, debug: bool = False, bypass_cache: bool = False, clear_cache: bool = False
+) -> None:
     """Process an audio/video file and generate Anki flashcards."""
     configure_logging(debug)
 
     # Initialize cache system
     from . import cache
+
     if clear_cache:
         cache.clear_cache()
     cache.init_cache(bypass=bypass_cache)
@@ -269,14 +276,15 @@ def main() -> None:
     """CLI entry point."""
     # If no arguments, show help
     import sys
+
     if len(sys.argv) == 1:
-        cli.main(['--help'])
+        cli.main(["--help"])
         return
 
     # If first arg is a file, treat it as the process command
-    if len(sys.argv) > 1 and not sys.argv[1].startswith('-') and not sys.argv[1] in ['paths', 'process']:
+    if len(sys.argv) > 1 and not sys.argv[1].startswith("-") and sys.argv[1] not in ["paths", "process"]:
         # Insert 'process' command before the file argument
-        sys.argv.insert(1, 'process')
+        sys.argv.insert(1, "process")
 
     cli()
 
