@@ -53,11 +53,13 @@ def isolate_voice(
     if not input_path.exists():
         raise FileNotFoundError(f"Input file not found: {input_path}")
 
+    # Compute file hash once
+    file_hash = cache.compute_file_hash(input_path)
+
     # Check cache
     update_progress(0)
-    cached_result = cache.cache_retrieve("voice_isolation", input_path, ".mp3", 1)
-    if cached_result:
-        cached_path = cache.get_cache_path("voice_isolation", cache.compute_file_hash(input_path), ".mp3")
+    if cache.cache_retrieve("voice_isolation", input_path, ".mp3", 1):
+        cached_path = cache.get_cache_path("voice_isolation", file_hash, ".mp3")
         logger.debug(f"Using cached isolated voice file: {cached_path}")
         update_progress(100)
         return Path(cached_path)
@@ -93,18 +95,15 @@ def isolate_voice(
                         logger.debug("Streaming isolated audio from API")
                         update_progress(50)
 
-                        # Stream the response to a temporary file
                         total_chunks = 0
                         for chunk in response.iter_bytes():
                             if not chunk:
                                 continue
                             temp_file.write(chunk)
                             total_chunks += 1
-                            # Update progress based on chunks received
-                            if total_chunks % 10 == 0:  # Update every 10 chunks
-                                update_progress(50 + (total_chunks % 30))  # Progress between 50-80%
+                            if total_chunks % 10 == 0:
+                                update_progress(50 + (total_chunks % 30))
 
-                        # Ensure all data is written to disk
                         temp_file.flush()
                         os.fsync(temp_file.fileno())
 

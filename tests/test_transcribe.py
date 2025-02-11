@@ -220,7 +220,8 @@ def test_bypass_cache(
         patch("audio2anki.transcribe.OpenAI", return_value=mock_openai),
         patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}),
     ):
-        # First call
+        # First call with normal cache
+        cache.init_cache(bypass=False)
         segments1 = transcribe_audio(
             audio_file,
             transcript_path=None,
@@ -231,6 +232,7 @@ def test_bypass_cache(
         )
 
         # Second call with bypass_cache=True
+        cache.init_cache(bypass=True)
         segments2 = transcribe_audio(
             audio_file,
             transcript_path=None,
@@ -238,7 +240,6 @@ def test_bypass_cache(
             language="english",
             task_id=None,
             progress=None,
-            bypass_cache=True,
         )
 
         assert segments1 == segments2
