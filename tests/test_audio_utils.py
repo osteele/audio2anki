@@ -57,7 +57,7 @@ def test_trim_silence() -> None:
     silence = PydubSegment.silent(duration=500)  # 500ms of silence
     # Create non-silent audio by modifying the samples
     non_silent = PydubSegment.silent(duration=500)
-    non_silent = non_silent._spawn(b'\x01' * (len(non_silent.raw_data)))  # Non-zero samples
+    non_silent = non_silent._spawn(b"\x01" * (len(non_silent.raw_data)))  # Non-zero samples
     # Combine silence and non-silent parts
     audio = silence + non_silent + silence  # 1.5 seconds total
     trimmed = trim_silence(audio)

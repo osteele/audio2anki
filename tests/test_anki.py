@@ -110,9 +110,7 @@ def test_create_anki_deck_missing_fields(tmp_path: Path) -> None:
         assert content[1] == "Test\t\t\t"  # Empty optional fields
 
 
-def test_create_anki_deck_with_progress(
-    segments: list[AudioSegment], tmp_path: Path, mock_progress: Progress
-) -> None:
+def test_create_anki_deck_with_progress(segments: list[AudioSegment], tmp_path: Path, mock_progress: Progress) -> None:
     """Test deck creation with progress tracking."""
     output_dir = tmp_path / "output"
     output_dir.mkdir()

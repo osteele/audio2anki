@@ -9,7 +9,6 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from audio2anki import cache
 from audio2anki.cache import clear_cache
 from audio2anki.voice_isolation import VoiceIsolationError, isolate_voice
 
@@ -47,11 +46,9 @@ def mock_api_response() -> MockResponse:
 def setup_and_cleanup() -> Generator[None, None, None]:
     """Set up test environment and clean up after tests."""
     os.environ["ELEVENLABS_API_KEY"] = "test_key"
-    clear_cache()
     yield
     if "ELEVENLABS_API_KEY" in os.environ:
         del os.environ["ELEVENLABS_API_KEY"]
-    clear_cache()
 
 
 def test_isolate_voice_missing_api_key(test_audio_file: Path):
@@ -64,7 +61,7 @@ def test_isolate_voice_missing_api_key(test_audio_file: Path):
         isolate_voice(test_audio_file)
 
 
-def test_isolate_voice_basic(test_audio_file: Path, mock_api_response: MockResponse) -> None:
+def test_isolate_voice_basic(test_audio_file: Path, mock_api_response: MockResponse, test_cache_dir: Path) -> None:
     """Test basic voice isolation functionality."""
     with patch("httpx.Client") as mock_client:
         mock_stream = MagicMock()
@@ -79,11 +76,8 @@ def test_isolate_voice_basic(test_audio_file: Path, mock_api_response: MockRespo
             assert b"isolatedvoicedata" == data
 
 
-def test_isolate_voice_caching(test_audio_file: Path, mock_api_response: MockResponse) -> None:
+def test_isolate_voice_caching(test_audio_file: Path, mock_api_response: MockResponse, test_cache_dir: Path) -> None:
     """Test that voice isolation results are cached."""
-    # Initialize cache to use FileCache
-    cache.init_cache(bypass=False)
-
     with patch("httpx.Client") as mock_client:
         mock_stream = MagicMock()
         mock_stream.__enter__.return_value = mock_api_response
@@ -103,7 +97,9 @@ def test_isolate_voice_caching(test_audio_file: Path, mock_api_response: MockRes
         assert path1 == path2
 
 
-def test_isolate_voice_progress_callback(test_audio_file: Path, mock_api_response: MockResponse) -> None:
+def test_isolate_voice_progress_callback(
+    test_audio_file: Path, mock_api_response: MockResponse, test_cache_dir: Path
+) -> None:
     """Test that progress callback is called with expected values."""
     progress_values: list[float] = []
 
@@ -129,7 +125,7 @@ def test_isolate_voice_file_not_found() -> None:
         isolate_voice("nonexistent.mp3")
 
 
-def test_isolate_voice_api_error(test_audio_file: Path) -> None:
+def test_isolate_voice_api_error(test_audio_file: Path, test_cache_dir: Path) -> None:
     """Test error handling for API errors."""
 
     class MockErrorResponse:
@@ -149,7 +145,7 @@ def test_isolate_voice_api_error(test_audio_file: Path) -> None:
             isolate_voice(test_audio_file)
 
 
-def test_isolate_voice_api_timeout(test_audio_file: Path) -> None:
+def test_isolate_voice_api_timeout(test_audio_file: Path, test_cache_dir: Path) -> None:
     """Test error handling for API timeout."""
     with patch("httpx.Client") as mock_client:
         mock_client.return_value.__enter__.return_value.stream.side_effect = httpx.TimeoutException("Timeout")
@@ -157,7 +153,7 @@ def test_isolate_voice_api_timeout(test_audio_file: Path) -> None:
             isolate_voice(test_audio_file)
 
 
-def test_isolate_voice_request_error(test_audio_file: Path) -> None:
+def test_isolate_voice_request_error(test_audio_file: Path, test_cache_dir: Path) -> None:
     """Test error handling for general request errors."""
     with patch("httpx.Client") as mock_client:
         mock_client.return_value.__enter__.return_value.stream.side_effect = httpx.RequestError("Network error")
@@ -165,7 +161,7 @@ def test_isolate_voice_request_error(test_audio_file: Path) -> None:
             isolate_voice(test_audio_file)
 
 
-def test_isolate_voice_empty_response(test_audio_file: Path) -> None:
+def test_isolate_voice_empty_response(test_audio_file: Path, test_cache_dir: Path) -> None:
     """Test error handling for empty API response."""
 
     class MockEmptyResponse:

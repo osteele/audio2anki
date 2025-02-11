@@ -48,6 +48,7 @@ def test_generate_deck(tmp_path: Path, mock_pipeline_progress: PipelineProgress)
 
     # Create test audio file
     from pydub import AudioSegment as PydubSegment
+
     audio = PydubSegment.silent(duration=4000)  # 4 seconds of silence
     audio_file = tmp_path / "test_audio.mp3"
     audio.export(str(audio_file), format="mp3")
