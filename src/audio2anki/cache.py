@@ -257,9 +257,7 @@ def init_cache(bypass: bool = False) -> None:
     _cache = DummyCache() if bypass else FileCache()
 
 
-def cache_retrieve(
-    key: str, input_path: str | Path, suffix: str, extra_params: dict[str, Any] | None = None
-) -> bool:
+def cache_retrieve(key: str, input_path: str | Path, suffix: str, extra_params: dict[str, Any] | None = None) -> bool:
     """Check if a cached result exists."""
     return _cache.retrieve(key, input_path, suffix, extra_params)
 

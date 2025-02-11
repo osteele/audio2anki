@@ -64,7 +64,7 @@ def split_audio(
     Args:
         input_file: Path to input audio file
         segments: List of segments to extract
-        output_dir: Directory to save audio segments
+        output_dir: Directory to save audio segments (should be the media directory)
         task_id: Progress bar task ID
         progress: Progress bar instance
         silence_thresh: Silence threshold in dB. Higher (less negative) values mean more
@@ -79,9 +79,8 @@ def split_audio(
     # Compute hash of input file
     file_hash = compute_file_hash(input_file)
 
-    # Create media directory
-    media_dir = output_dir / "media"
-    media_dir.mkdir(parents=True, exist_ok=True)
+    # Create output directory if it doesn't exist
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     # Process each segment
     for i, segment in enumerate(segments):
@@ -95,7 +94,7 @@ def split_audio(
 
         # Export audio segment with hash in filename
         filename = f"audio2anki_{file_hash}_{i + 1:03d}.mp3"
-        segment_path = media_dir / filename
+        segment_path = output_dir / filename
         segment_audio.export(segment_path, format="mp3")
         segment.audio_file = filename
 

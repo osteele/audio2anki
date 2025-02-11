@@ -27,7 +27,7 @@ def test_transcode_audio_creates_mp3(test_audio_file: Path, tmp_path: Path) -> N
 
 def test_transcode_audio_with_progress(test_audio_file: Path) -> None:
     """Test that transcode_audio calls progress callback."""
-    progress_values = []
+    progress_values: list[float] = []
 
     def progress_callback(value: float) -> None:
         progress_values.append(value)

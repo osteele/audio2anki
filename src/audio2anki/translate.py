@@ -244,13 +244,9 @@ def translate_srt(
     if not openai_key:
         raise ValueError("OPENAI_API_KEY environment variable is required for translation and readings")
 
-    # Prepare output files
-    translated_file = input_file.with_suffix(f".{target_language}.srt")
-    reading_file = None
-    if source_language and source_language.lower() in ["chinese", "zh", "mandarin"]:
-        reading_file = input_file.with_suffix(".pinyin.srt")
-    elif source_language and source_language.lower() in ["japanese", "ja"]:
-        reading_file = input_file.with_suffix(".hiragana.srt")
+    # Prepare output files with standardized naming
+    translated_file = input_file.parent / f"translation_{input_file.stem}.srt"
+    reading_file = input_file.parent / f"pronunciation_{input_file.stem}.srt" if source_language else None
 
     # Check cache for translation
     cache_params = {
@@ -359,7 +355,7 @@ def translate_srt(
     return translated_file, reading_file
 
 
-# New function to translate a list of segments (used by tests)
+# Translate a list of segments (used by tests)
 def translate_segments(
     segments: list[TranscriptionSegment],
     target_language: str,
