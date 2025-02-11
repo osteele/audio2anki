@@ -11,10 +11,18 @@ from rich.progress import Progress, TaskID
 from . import cache
 
 
-class TranscriptionSegment(TypedDict):
+class TranscriptionSegmentRequired(TypedDict):
+    """Required fields for a transcription segment."""
+
     start: float
     end: float
     text: str
+
+
+class TranscriptionSegment(TranscriptionSegmentRequired, total=False):
+    """A segment of transcribed audio with optional translation."""
+
+    translation: str | None
 
 
 def format_timestamp(seconds: float) -> str:

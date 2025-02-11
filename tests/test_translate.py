@@ -7,16 +7,16 @@ import httpx
 import pytest
 from rich.progress import Progress, TaskID
 
-from audio2anki.models import AudioSegment
+from audio2anki.transcribe import TranscriptionSegment
 from audio2anki.translate import translate_segments
 
 
 @pytest.fixture
-def segments() -> list[AudioSegment]:
+def segments() -> list[TranscriptionSegment]:
     """Return test segments."""
     return [
-        AudioSegment(start=0.0, end=2.0, text="你好"),
-        AudioSegment(start=2.0, end=4.0, text="谢谢"),
+        {"start": 0.0, "end": 2.0, "text": "你好"},
+        {"start": 2.0, "end": 4.0, "text": "谢谢"},
     ]
 
 
@@ -35,7 +35,7 @@ def task_id(progress: Progress) -> TaskID:
 @pytest.mark.skip(reason="Test assertion needs to be updated")
 @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
 def test_translate_segments(
-    segments: list[AudioSegment],
+    segments: list[TranscriptionSegment],
     progress: Progress,
     task_id: TaskID,
 ) -> None:
@@ -54,11 +54,11 @@ def test_translate_segments(
         mock_openai.return_value = mock_client
 
         # Translate segments
-        translate_segments(segments, "english", task_id, progress)
+        translated = translate_segments(segments, "english", task_id, progress)
 
         # Check translations
-        assert segments[0].translation == "Hello"
-        assert segments[1].translation == "Hello"
+        assert len(translated) == 2
+        assert all(s.get("translation") == "Hello" for s in translated)
 
         # Verify API was called correctly
         assert mock_client.chat.completions.create.call_count == 2
@@ -73,7 +73,7 @@ def test_translate_segments(
 @pytest.mark.skip(reason="Error handling test needs to be fixed")
 @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
 def test_translate_error_handling(
-    segments: list[AudioSegment],
+    segments: list[TranscriptionSegment],
     progress: Progress,
     task_id: TaskID,
 ) -> None:
@@ -103,7 +103,7 @@ def test_translate_error_handling(
 @pytest.mark.skip(reason="Empty response handling needs to be fixed")
 @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
 def test_translate_empty_response(
-    segments: list[AudioSegment],
+    segments: list[TranscriptionSegment],
     progress: Progress,
     task_id: TaskID,
 ) -> None:
@@ -147,17 +147,17 @@ def mock_deepl_response() -> Mock:
 
 
 @pytest.fixture
-def segments_deepl() -> list[AudioSegment]:
+def segments_deepl() -> list[TranscriptionSegment]:
     """Sample audio segments."""
     return [
-        AudioSegment(start=0, end=1, text="Hello"),
-        AudioSegment(start=1, end=2, text="World"),
+        {"start": 0, "end": 1, "text": "Hello"},
+        {"start": 1, "end": 2, "text": "World"},
     ]
 
 
 @pytest.mark.skip(reason="OpenAI translation test needs to be implemented")
 def test_translate_segments_with_openai(
-    segments_deepl: list[AudioSegment],
+    segments_deepl: list[TranscriptionSegment],
     mock_openai_response: Mock,
 ) -> None:
     """Test translation using OpenAI."""
@@ -172,11 +172,11 @@ def test_translate_segments_with_openai(
                 translated = translate_segments(segments_deepl, "english", task_id, progress)
 
             assert len(translated) == 2
-            assert all(s.translation == "Translated text" for s in translated)
+            assert all(s.get("translation") == "Translated text" for s in translated)
 
 
 def test_translate_segments_with_deepl(
-    segments_deepl: list[AudioSegment],
+    segments_deepl: list[TranscriptionSegment],
     mock_deepl_response: Mock,
 ) -> None:
     """Test translation using DeepL."""
@@ -189,12 +189,12 @@ def test_translate_segments_with_deepl(
                 translated = translate_segments(segments_deepl, "english", task_id, progress)
 
             assert len(translated) == 2
-            assert all(s.translation == "Translated text" for s in translated)
+            assert all(s.get("translation") == "Translated text" for s in translated)
 
 
 @pytest.mark.skip(reason="OpenAI fallback test needs to be implemented")
 def test_translate_segments_fallback_to_openai(
-    segments_deepl: list[AudioSegment],
+    segments_deepl: list[TranscriptionSegment],
     mock_openai_response: Mock,
 ) -> None:
     """Test fallback to OpenAI when DeepL fails."""
@@ -212,7 +212,7 @@ def test_translate_segments_fallback_to_openai(
                     translated = translate_segments(segments_deepl, "english", task_id, progress)
 
                 assert len(translated) == 2
-                assert all(s.translation == "Translated text" for s in translated)
+                assert all(s.get("translation") == "Translated text" for s in translated)
 
 
 def test_translate_segments_no_api_keys() -> None:
