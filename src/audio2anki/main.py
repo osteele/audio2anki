@@ -195,10 +195,27 @@ def voice_isolation(input_data: Any, progress: PipelineProgress, **kwargs: Any) 
 
 def transcribe(input_data: str | Path, progress: PipelineProgress, **kwargs: Any) -> str:
     """Transcribe the audio file using OpenAI Whisper and produce an SRT file."""
-    # Simulate transcription progress
-    progress.update_stage(50)  # In real implementation, update based on Whisper progress
-    # Placeholder: In a real implementation, call OpenAI Whisper
-    return str(input_data).replace(".cleaned.mp3", ".srt")
+    from pathlib import Path
+
+    from .transcribe import transcribe_audio
+
+    input_path = Path(input_data)
+    output_path = input_path.with_suffix(".srt")
+
+    # Get the task ID for the current stage, defaulting to None if not found
+    current_stage = progress.current_stage
+    task_id = progress.stage_tasks.get(current_stage) if current_stage else None
+
+    transcribe_audio(
+        audio_file=input_path,
+        transcript_path=output_path,
+        model="whisper-1",
+        progress=progress.progress,
+        task_id=task_id,
+        **kwargs,
+    )
+
+    return str(output_path)
 
 
 def sentence_selection(input_data: str | Path, progress: PipelineProgress, **kwargs: Any) -> str:
