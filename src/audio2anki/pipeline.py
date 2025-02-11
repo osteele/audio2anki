@@ -79,7 +79,7 @@ class PipelineProgress:
             TimeRemainingColumn(),
             console=console,
         )
-        pipeline_task = progress.add_task("[bold blue]Processing audio file...", total=5)  # 5 stages
+        pipeline_task = progress.add_task("[bold blue]Creating Anki deck...", total=5)  # 5 stages
         return cls(progress=progress, pipeline_task=pipeline_task, console=console)
 
     def __enter__(self) -> "PipelineProgress":
@@ -144,7 +144,7 @@ def run_pipeline(input_path: Path, console: Console, options: PipelineOptions) -
             context = translate(context, progress)
             progress.complete_stage()
 
-            progress.start_stage("Generating Anki deck")
+            progress.start_stage("Creating Anki deck files")
             context = generate_deck(context, progress)
             progress.complete_stage()
 
