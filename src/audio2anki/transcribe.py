@@ -1,8 +1,8 @@
 """Transcription module using OpenAI API."""
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TypedDict
 
 import httpx
 from openai import OpenAI
@@ -11,18 +11,16 @@ from rich.progress import Progress, TaskID
 from . import cache
 
 
-class TranscriptionSegmentRequired(TypedDict):
-    """Required fields for a transcription segment."""
+@dataclass
+class TranscriptionSegment:
+    """A segment of transcribed audio with optional translation."""
 
     start: float
     end: float
     text: str
-
-
-class TranscriptionSegment(TranscriptionSegmentRequired, total=False):
-    """A segment of transcribed audio with optional translation."""
-
-    translation: str | None
+    translation: str | None = None
+    pronunciation: str | None = None
+    audio_file: str | None = None
 
 
 def format_timestamp(seconds: float) -> str:
@@ -38,11 +36,11 @@ def format_srt(segments: list[TranscriptionSegment]) -> str:
     """Format transcription segments into SRT content."""
     srt_lines: list[str] = []
     for idx, segment in enumerate(segments, start=1):
-        start_ts = format_timestamp(segment["start"])
-        end_ts = format_timestamp(segment["end"])
+        start_ts = format_timestamp(segment.start)
+        end_ts = format_timestamp(segment.end)
         srt_lines.append(f"{idx}")
         srt_lines.append(f"{start_ts} --> {end_ts}")
-        srt_lines.append(segment["text"])
+        srt_lines.append(segment.text)
         srt_lines.append("")
     return "\n".join(srt_lines)
 
@@ -74,7 +72,7 @@ def parse_srt(file: Path) -> list[TranscriptionSegment]:
             except Exception:
                 continue
             text = " ".join(lines[2:]).strip()
-            segments.append({"start": start, "end": end, "text": text})
+            segments.append(TranscriptionSegment(start=start, end=end, text=text))
     return segments
 
 
@@ -88,7 +86,7 @@ def load_transcript(file: Path) -> list[TranscriptionSegment]:
             parts = line.strip().split("\t")
             if len(parts) >= 3:
                 start, end, text = float(parts[0]), float(parts[1]), parts[2]
-                segments.append({"start": start, "end": end, "text": text})
+                segments.append(TranscriptionSegment(start=start, end=end, text=text))
     return segments
 
 
@@ -97,7 +95,7 @@ def save_transcript(segments: list[TranscriptionSegment], file: Path) -> None:
     if file.suffix.lower() == ".srt":
         content = format_srt(segments)
     else:
-        content = "\n".join(f"{s['start']}\t{s['end']}\t{s['text']}" for s in segments)
+        content = "\n".join(f"{s.start}\t{s.end}\t{s.text}" for s in segments)
     with open(file, "w", encoding="utf-8") as f:
         f.write(content)
 
@@ -200,14 +198,14 @@ def transcribe_audio(
         if max_length and (end - start) > max_length:
             continue
 
-        segments.append({"start": start, "end": end, "text": segment.text.strip()})
+        segments.append(TranscriptionSegment(start=start, end=end, text=segment.text.strip()))
 
     # Save to cache
     if not bypass_cache:
         transcript_content = (
             format_srt(segments)
             if cache_ext == ".srt"
-            else "\n".join(f"{s['start']}\t{s['end']}\t{s['text']}" for s in segments)
+            else "\n".join(f"{s.start}\t{s.end}\t{s.text}" for s in segments)
         )
         cache.cache_store("transcribe", audio_file, transcript_content.encode(), cache_ext, extra_params=cache_params)
 

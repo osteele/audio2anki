@@ -181,7 +181,7 @@ def translate_single_segment(
     try:
         if use_deepl:
             translation, reading = translate_with_deepl(
-                segment["text"],
+                segment.text,
                 source_language,
                 target_language,
                 translator,
@@ -189,25 +189,25 @@ def translate_single_segment(
             )
         else:
             translation, reading = translate_with_openai(
-                segment["text"],
+                segment.text,
                 source_language,
                 target_language,
                 translator,
             )
 
-        translated_segment: TranscriptionSegment = {
-            "start": segment["start"],
-            "end": segment["end"],
-            "text": translation,
-        }
+        translated_segment = TranscriptionSegment(
+            start=segment.start,
+            end=segment.end,
+            text=translation,
+        )
 
         reading_segment: TranscriptionSegment | None = None
         if reading:
-            reading_segment = {
-                "start": segment["start"],
-                "end": segment["end"],
-                "text": reading,
-            }
+            reading_segment = TranscriptionSegment(
+                start=segment.start,
+                end=segment.end,
+                text=reading,
+            )
 
         return translated_segment, reading_segment, True
 
@@ -370,8 +370,8 @@ def translate_segments(
         for future in as_completed(future_to_seg):
             translated_seg, _unused, _unused2 = future.result()
             seg = future_to_seg[future]
-            # Set the 'translation' attribute on the segment
-            setattr(seg, "translation", translated_seg["text"])
+            # Set the translation on the segment
+            seg.translation = translated_seg.text
             translated_segments.append(seg)
             progress.update(task_id, advance=1)
     return translated_segments
