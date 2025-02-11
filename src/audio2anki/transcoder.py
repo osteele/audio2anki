@@ -59,13 +59,12 @@ def transcode_audio(
         "target_bitrate": target_bitrate,
     }
     update_progress(0)  # Start progress
-    cached_result = cache.cache_retrieve("transcode", input_path, f".{target_format}", 7, extra_params)
-    if cached_result:
-        # Get the path from the cache metadata
-        cached_path = cache.get_cache_path("transcode", cache.compute_file_hash(input_path), f".{target_format}")
+
+    if cache.cache_retrieve("transcode", input_path, f".{target_format}", extra_params=extra_params):
+        cached_path = Path(cache.get_cache_path("transcode", cache.compute_file_hash(input_path), f".{target_format}"))
         logger.debug(f"Using cached transcoded file: {cached_path}")
         update_progress(100)  # Cache hit is immediate completion
-        return Path(cached_path)
+        return cached_path
 
     try:
         # Load the audio file
@@ -104,13 +103,13 @@ def transcode_audio(
 
             # Store in cache
             with open(temp_path, "rb") as f:
-                cached_path = cache.cache_store(
+                cached_path = Path(cache.cache_store(
                     "transcode",
                     input_path,
                     f.read(),
                     f".{target_format}",
                     extra_params,
-                )
+                ))
 
             update_progress(90)  # Cache storage complete
 
@@ -118,7 +117,7 @@ def transcode_audio(
         os.unlink(temp_path)
 
         update_progress(100)  # All done
-        return Path(cached_path)
+        return cached_path
 
     except Exception as e:
         logger.error(f"Error transcoding audio file: {e}")

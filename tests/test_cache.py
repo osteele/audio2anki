@@ -73,7 +73,7 @@ def test_cache_store_and_retrieve(temp_input_file: str, setup_cache: str) -> Non
     assert Path(cache_path).exists()
 
     # Retrieve data
-    hit = cache_retrieve(stage_name, temp_input_file, extension, version=1)
+    hit = cache_retrieve(stage_name, temp_input_file, extension)
     assert hit
 
 
@@ -91,7 +91,9 @@ def test_cache_expiry(temp_input_file: str, setup_cache: str, monkeypatch: Monke
     monkeypatch.setattr(time, "time", lambda: future_time)
 
     # Data should be expired after 7 days - but we don't have expiry in the current implementation
-    hit = cache_retrieve(stage_name, temp_input_file, extension, version=2)  # Use different version to force miss
+
+    # Use different extra parameters to force miss
+    hit = cache_retrieve(stage_name, temp_input_file, extension, extra_params={"version": 2})
     assert not hit
     assert Path(cache_path).exists()  # File still exists since we don't have expiry
 
@@ -108,11 +110,11 @@ def test_cache_with_extra_params(temp_input_file: str, setup_cache: str) -> None
     cache_store(stage_name, temp_input_file, test_data, extension, extra_params=params1)
 
     # Retrieve with different params should return False
-    hit = cache_retrieve(stage_name, temp_input_file, extension, version=1, extra_params=params2)
+    hit = cache_retrieve(stage_name, temp_input_file, extension, extra_params=params2)
     assert not hit
 
     # Retrieve with same params should return True
-    hit = cache_retrieve(stage_name, temp_input_file, extension, version=1, extra_params=params1)
+    hit = cache_retrieve(stage_name, temp_input_file, extension, extra_params=params1)
     assert hit
 
 
@@ -132,7 +134,7 @@ def test_cache_delete(temp_input_file: str, setup_cache: str) -> None:
     assert not cache_file.exists()
 
     # Retrieve should return False
-    hit = cache_retrieve(stage_name, temp_input_file, extension, version=1)
+    hit = cache_retrieve(stage_name, temp_input_file, extension)
     assert not hit
 
 
@@ -150,6 +152,6 @@ def test_clear_cache(temp_input_file: str, setup_cache: str) -> None:
     clear_cache()
 
     # Cache should be empty
-    hit = cache_retrieve(stage_name, temp_input_file, extension, version=1)
+    hit = cache_retrieve(stage_name, temp_input_file, extension)
     assert not hit
     assert not Path(cache_path).exists()

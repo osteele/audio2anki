@@ -260,21 +260,17 @@ def translate_srt(
     }
 
     # Try to retrieve translation from cache
-    if cache.cache_retrieve("translate", input_file, ".srt", version=1, extra_params=cache_params):
+    if cache.cache_retrieve("translate", input_file, ".srt", cache_params):
         translated_path = Path(cache.get_cache_path("translate", cache.compute_file_hash(input_file), ".srt"))
-        if translated_path.exists():
-            # Copy from cache to output location
-            shutil.copy2(translated_path, translated_file)
-            progress.update(task_id, completed=100)
-            return translated_file, reading_file
+        # Copy from cache to output location
+        shutil.copy2(translated_path, translated_file)
+        progress.update(task_id, completed=100)
+        return translated_file, reading_file
 
     # Try to retrieve reading from cache if applicable
-    if reading_file and cache.cache_retrieve(
-        "reading", input_file, ".srt", version=1, extra_params={"source_language": source_language}
-    ):
+    if reading_file and cache.cache_retrieve("reading", input_file, ".srt", {"source_language": source_language}):
         reading_path = Path(cache.get_cache_path("reading", cache.compute_file_hash(input_file), ".srt"))
-        if reading_path.exists():
-            shutil.copy2(reading_path, reading_file)
+        shutil.copy2(reading_path, reading_file)
 
     # Initialize OpenAI client for translation and readings
     openai_client = OpenAI(api_key=openai_key)

@@ -143,7 +143,7 @@ def transcribe_audio(
         "max_length": max_length,
     }
 
-    if cache.cache_retrieve("transcribe", audio_file, cache_ext, version=1, extra_params=cache_params):
+    if cache.cache_retrieve("transcribe", audio_file, cache_ext, cache_params):
         cache_path = Path(cache.get_cache_path("transcribe", cache.compute_file_hash(audio_file), cache_ext))
         segments = load_transcript(cache_path)
         if progress and task_id:

@@ -53,12 +53,13 @@ def isolate_voice(
     if not input_path.exists():
         raise FileNotFoundError(f"Input file not found: {input_path}")
 
-    # Compute file hash once
+    # Compute file hash
     file_hash = cache.compute_file_hash(input_path)
+    cache_params = {"input_hash": file_hash}
 
     # Check cache
     update_progress(0)
-    if cache.cache_retrieve("voice_isolation", input_path, ".mp3", 1):
+    if cache.cache_retrieve("voice_isolation", input_path, ".mp3", extra_params=cache_params):
         cached_path = cache.get_cache_path("voice_isolation", file_hash, ".mp3")
         logger.debug(f"Using cached isolated voice file: {cached_path}")
         update_progress(100)
@@ -114,7 +115,9 @@ def isolate_voice(
 
             # Store in cache
             with open(temp_path, "rb") as f:
-                cached_path = cache.cache_store("voice_isolation", input_path, f.read(), ".mp3")
+                cached_path = cache.cache_store(
+                    "voice_isolation", input_path, f.read(), ".mp3", extra_params=cache_params
+                )
 
             # Clean up temporary file
             os.unlink(temp_path)
