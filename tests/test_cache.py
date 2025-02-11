@@ -52,7 +52,7 @@ def test_init_cache(setup_cache: str) -> None:
     """Test cache initialization."""
     cache_dir: str = setup_cache
     assert Path(cache_dir).exists()
-    assert (Path(cache_dir) / "metadata.json").exists()
+    assert (Path(cache_dir) / "cache.db").exists()
 
 
 def test_get_cache_path() -> None:
