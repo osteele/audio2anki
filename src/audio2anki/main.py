@@ -1,5 +1,6 @@
 """Main entry point for audio2anki."""
 
+import locale
 import logging
 import sys
 from dataclasses import dataclass, field
@@ -206,16 +207,109 @@ def transcribe(input_data: str | Path, progress: PipelineProgress, **kwargs: Any
     current_stage = progress.current_stage
     task_id = progress.stage_tasks.get(current_stage) if current_stage else None
 
+    # Get source language from kwargs, defaulting to Chinese
+    source_language = kwargs.pop("source_language", "chinese")
+
+    # Map full language names to Whisper codes
+    language_codes = {
+        "chinese": "zh",
+        "japanese": "ja",
+        "korean": "ko",
+        "english": "en",
+        "french": "fr",
+        "german": "de",
+        "spanish": "es",
+        "italian": "it",
+        "portuguese": "pt",
+        "russian": "ru",
+    }
+
+    # Convert language name to code for Whisper
+    language_code = language_codes.get(source_language.lower())
+
+    # Remove target_language from kwargs as it's not used by transcribe_audio
+    kwargs.pop("target_language", None)
+
     transcribe_audio(
         audio_file=input_path,
         transcript_path=output_path,
         model="whisper-1",
         progress=progress.progress,
         task_id=task_id,
+        language=language_code,
         **kwargs,
     )
 
     return str(output_path)
+
+
+def get_system_language() -> str:
+    """Get the system language code, falling back to 'english' if not determinable."""
+    try:
+        # Try to get the system locale
+        lang_code = locale.getdefaultlocale()[0]
+        if not lang_code:
+            return "english"
+
+        # Map common language codes to full names
+        language_map = {
+            "en": "english",
+            "zh": "chinese",
+            "ja": "japanese",
+            "ko": "korean",
+            "fr": "french",
+            "de": "german",
+            "es": "spanish",
+            "it": "italian",
+            "pt": "portuguese",
+            "ru": "russian",
+        }
+
+        # Extract primary language code (e.g., "en" from "en_US")
+        primary_code = lang_code.split("_")[0].lower()
+        return language_map.get(primary_code, "english")
+    except Exception:
+        return "english"
+
+
+def translate(input_data: str | Path, progress: PipelineProgress, **kwargs: Any) -> str:
+    """Translate the SRT file to English and create pinyin if needed."""
+    from pathlib import Path
+
+    from .translate import translate_srt
+
+    input_path = Path(input_data)
+
+    # Get the task ID for the current stage
+    task_id = None
+    if progress.current_stage:
+        task_id = progress.stage_tasks.get(progress.current_stage)
+    if not task_id:
+        task_id = progress.progress.add_task("Translating...", total=100)
+
+    # Extract and remove language options from kwargs
+    source_language = kwargs.pop("source_language", "chinese")
+    target_language = kwargs.pop("target_language", None)
+    if target_language is None:
+        target_language = get_system_language()
+
+    # Remove any potential duplicates (if they exist)
+    remaining_kwargs = {k: v for k, v in kwargs.items() if k not in ("source_language", "target_language")}
+
+    # Call translate_srt with explicit source and target language, passing only remaining kwargs
+    translated_file, pinyin_file = translate_srt(
+        input_file=input_path,
+        source_language=source_language,
+        target_language=target_language,
+        task_id=task_id,
+        progress=progress.progress,
+        **remaining_kwargs,
+    )
+
+    if pinyin_file:
+        print(f"Created pinyin file: {pinyin_file}")
+
+    return str(translated_file)
 
 
 def sentence_selection(input_data: str | Path, progress: PipelineProgress, **kwargs: Any) -> str:
@@ -241,6 +335,7 @@ def create_pipeline(options: PipelineOptions) -> Pipeline:
     pipeline.add_stage(Stage("transcode", "Transcoding audio", transcode))
     pipeline.add_stage(Stage("voice_isolation", "Isolating voice with Eleven Labs API", voice_isolation))
     pipeline.add_stage(Stage("transcribe", "Transcribing with OpenAI Whisper", transcribe))
+    pipeline.add_stage(Stage("translate", "Translating transcript", translate))
     pipeline.add_stage(Stage("sentence_selection", "Selecting sentences", sentence_selection))
     pipeline.add_stage(Stage("generate_deck", "Generating Anki deck", generate_deck))
 
@@ -261,8 +356,23 @@ def cli(ctx: click.Context) -> None:
 @click.option("--debug", is_flag=True, help="Enable debug output")
 @click.option("--bypass-cache", is_flag=True, help="Bypass the cache and force recomputation")
 @click.option("--clear-cache", is_flag=True, help="Clear the cache before starting")
+@click.option(
+    "--source-language",
+    help="Source language of the audio (defaults to Chinese)",
+    default="chinese",
+)
+@click.option(
+    "--target-language",
+    help="Target language for translation (defaults to system language or English)",
+    default=None,
+)
 def process_command(
-    input_file: str, debug: bool = False, bypass_cache: bool = False, clear_cache: bool = False
+    input_file: str,
+    debug: bool = False,
+    bypass_cache: bool = False,
+    clear_cache: bool = False,
+    target_language: str | None = None,
+    source_language: str = "chinese",
 ) -> None:
     """Process an audio/video file and generate Anki flashcards."""
     configure_logging(debug)
@@ -277,6 +387,17 @@ def process_command(
     # Create and run the pipeline
     options = PipelineOptions(debug=debug)
     pipeline = create_pipeline(options)
+
+    # Add language parameters to both transcribe and translate stages
+    for stage in pipeline.stages:
+        if stage.name in ["transcribe", "translate"]:
+            stage.params.update(
+                {
+                    "source_language": source_language,
+                    "target_language": target_language,
+                }
+            )
+
     pipeline.run(input_file)
 
 
