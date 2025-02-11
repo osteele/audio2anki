@@ -103,13 +103,15 @@ def transcode_audio(
 
             # Store in cache
             with open(temp_path, "rb") as f:
-                cached_path = Path(cache.cache_store(
-                    "transcode",
-                    input_path,
-                    f.read(),
-                    f".{target_format}",
-                    extra_params,
-                ))
+                cached_path = Path(
+                    cache.cache_store(
+                        "transcode",
+                        input_path,
+                        f.read(),
+                        f".{target_format}",
+                        extra_params,
+                    )
+                )
 
             update_progress(90)  # Cache storage complete
 

@@ -2,11 +2,12 @@
 
 import locale
 import logging
+from pathlib import Path
 
 import click
 from rich.console import Console
 
-from .pipeline import PipelineOptions, create_pipeline
+from .pipeline import PipelineOptions, run_pipeline
 
 # Setup basic logging configuration
 console = Console()
@@ -92,21 +93,17 @@ def process_command(
     if target_language is None:
         target_language = get_system_language()
 
-    # Create and run the pipeline
-    options = PipelineOptions(debug=debug, bypass_cache=bypass_cache)
-    pipeline = create_pipeline(options)
+    # Create pipeline options
+    options = PipelineOptions(
+        debug=debug,
+        bypass_cache=bypass_cache,
+        clear_cache=clear_cache,
+        source_language=source_language,
+        target_language=target_language,
+    )
 
-    # Add language parameters to both transcribe and translate stages
-    for stage in pipeline.stages:
-        if stage.name in ["transcribe", "translate"]:
-            stage.params.update(
-                {
-                    "source_language": source_language,
-                    "target_language": target_language,
-                }
-            )
-
-    pipeline.run(input_file, console=console)
+    # Run the pipeline
+    run_pipeline(Path(input_file), console=console, options=options)
 
 
 @cli.command()
