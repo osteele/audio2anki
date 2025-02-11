@@ -51,7 +51,7 @@ class Cache(Protocol):
     """Protocol for cache implementations."""
 
     def retrieve(
-        self, key: str, input_path: str | Path, suffix: str, version: int, extra_params: dict[str, Any] | None = None
+        self, key: str, input_path: str | Path, suffix: str, extra_params: dict[str, Any] | None = None
     ) -> bool:
         """
         Check if a cached result exists.
@@ -60,7 +60,6 @@ class Cache(Protocol):
             key: Cache key for the operation
             input_path: Path to input file
             suffix: File suffix for the cached file
-            version: Version number for cache invalidation
             extra_params: Additional parameters that affect the output
 
         Returns:
@@ -143,7 +142,7 @@ class FileCache(Cache):
             # We don't handle older versions yet since this is the first version
 
     def retrieve(
-        self, key: str, input_path: str | Path, suffix: str, version: int, extra_params: dict[str, Any] | None = None
+        self, key: str, input_path: str | Path, suffix: str, extra_params: dict[str, Any] | None = None
     ) -> bool:
         input_path = Path(input_path)
         file_hash = compute_file_hash(input_path)
@@ -155,7 +154,7 @@ class FileCache(Cache):
         if row is None:
             return False
         db_version, db_params = row
-        if db_version != version:
+        if db_version != 1:  # hardcode version 1 since it's the only version we support
             return False
         stored_params = None if db_params is None else json.loads(db_params)
         if stored_params != extra_params:
@@ -214,7 +213,7 @@ class DummyCache(Cache):
     """Cache implementation that always misses."""
 
     def retrieve(
-        self, key: str, input_path: str | Path, suffix: str, version: int, extra_params: dict[str, Any] | None = None
+        self, key: str, input_path: str | Path, suffix: str, extra_params: dict[str, Any] | None = None
     ) -> bool:
         """Always return False (cache miss)."""
         return False
@@ -259,10 +258,10 @@ def init_cache(bypass: bool = False) -> None:
 
 
 def cache_retrieve(
-    key: str, input_path: str | Path, suffix: str, version: int, extra_params: dict[str, Any] | None = None
+    key: str, input_path: str | Path, suffix: str, extra_params: dict[str, Any] | None = None
 ) -> bool:
     """Check if a cached result exists."""
-    return _cache.retrieve(key, input_path, suffix, version, extra_params)
+    return _cache.retrieve(key, input_path, suffix, extra_params)
 
 
 def cache_store(
