@@ -19,7 +19,7 @@ DEFAULT_CONFIG = {
     "transcription_provider": "openai_whisper",
 }
 
-CONFIG_DIR = os.path.join(os.environ.get("HOME", "."), ".config", "audio2anki")
+CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "audio2anki"
 CONFIG_FILE = "config.toml"
 
 

@@ -12,7 +12,7 @@ from typing import Any, NoReturn, Protocol, TypedDict
 
 logger = logging.getLogger(__name__)
 
-CACHE_DIR = os.path.expanduser("~/.cache/audio2anki")
+CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "audio2anki"
 METADATA_FILE = "metadata.json"
 CURRENT_SCHEMA_VERSION = 1  # Initial schema version
 
@@ -107,7 +107,7 @@ class Cache(Protocol):
 class FileCache(Cache):
     """File-based cache implementation using sqlite3 for metadata storage."""
 
-    def __init__(self, cache_dir: str = CACHE_DIR):
+    def __init__(self, cache_dir: Path = CACHE_DIR):
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.db_path = self.cache_dir / "cache.db"
