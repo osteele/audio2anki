@@ -15,8 +15,8 @@ from audio2anki.translate import translate_segments
 def segments() -> list[TranscriptionSegment]:
     """Return test segments."""
     return [
-        {"start": 0.0, "end": 2.0, "text": "你好"},
-        {"start": 2.0, "end": 4.0, "text": "谢谢"},
+        TranscriptionSegment(start=0.0, end=2.0, text="你好"),
+        TranscriptionSegment(start=2.0, end=4.0, text="谢谢"),
     ]
 
 
@@ -58,7 +58,7 @@ def test_translate_segments(
 
         # Check translations
         assert len(translated) == 2
-        assert all(s.get("translation") == "Hello" for s in translated)
+        assert all(s.translation == "Hello" for s in translated)
 
         # Verify API was called correctly
         assert mock_client.chat.completions.create.call_count == 2
@@ -150,8 +150,8 @@ def mock_deepl_response() -> Mock:
 def segments_deepl() -> list[TranscriptionSegment]:
     """Sample audio segments."""
     return [
-        {"start": 0, "end": 1, "text": "Hello"},
-        {"start": 1, "end": 2, "text": "World"},
+        TranscriptionSegment(start=0, end=1, text="Hello"),
+        TranscriptionSegment(start=1, end=2, text="World"),
     ]
 
 
@@ -172,7 +172,7 @@ def test_translate_segments_with_openai(
                 translated = translate_segments(segments_deepl, "english", task_id, progress)
 
             assert len(translated) == 2
-            assert all(s.get("translation") == "Translated text" for s in translated)
+            assert all(s.translation == "Translated text" for s in translated)
 
 
 def test_translate_segments_with_deepl(
@@ -189,7 +189,7 @@ def test_translate_segments_with_deepl(
                 translated = translate_segments(segments_deepl, "english", task_id, progress)
 
             assert len(translated) == 2
-            assert all(s.get("translation") == "Translated text" for s in translated)
+            assert all(s.translation == "Translated text" for s in translated)
 
 
 @pytest.mark.skip(reason="OpenAI fallback test needs to be implemented")
@@ -212,7 +212,7 @@ def test_translate_segments_fallback_to_openai(
                     translated = translate_segments(segments_deepl, "english", task_id, progress)
 
                 assert len(translated) == 2
-                assert all(s.get("translation") == "Translated text" for s in translated)
+                assert all(s.translation == "Translated text" for s in translated)
 
 
 def test_translate_segments_no_api_keys() -> None:
@@ -222,4 +222,4 @@ def test_translate_segments_no_api_keys() -> None:
             task_id = progress.add_task("test", total=1)
             with pytest.raises(ValueError) as exc:
                 translate_segments([], "english", task_id, progress)
-            assert "OPENAI_API_KEY environment variable is required for translation and Pinyin" in str(exc.value)
+            assert "OPENAI_API_KEY environment variable is required for translation and readings" in str(exc.value)

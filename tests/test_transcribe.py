@@ -71,12 +71,12 @@ def test_transcribe_audio(
         )
 
         assert len(segments) == 2
-        assert segments[0]["text"] == "Hello"
-        assert segments[1]["text"] == "world"
-        assert segments[0]["start"] == 0.0
-        assert segments[0]["end"] == 2.0
-        assert segments[1]["start"] == 2.0
-        assert segments[1]["end"] == 4.0
+        assert segments[0].text == "Hello"
+        assert segments[1].text == "world"
+        assert segments[0].start == 0.0
+        assert segments[0].end == 2.0
+        assert segments[1].start == 2.0
+        assert segments[1].end == 4.0
 
         # Test caching - second call should use cache
         segments2 = transcribe_audio(
@@ -124,9 +124,9 @@ def test_transcribe_error(tmp_path: Path, mock_openai: Mock, setup_cache: Genera
 def test_load_and_save_transcript(tmp_path: Path) -> None:
     """Test loading and saving transcript."""
     transcript_file = tmp_path / "transcript.tsv"
-    segments: list[TranscriptionSegment] = [
-        {"start": 0.0, "end": 2.0, "text": "Hello"},
-        {"start": 2.0, "end": 4.0, "text": "world"},
+    segments = [
+        TranscriptionSegment(start=0.0, end=2.0, text="Hello"),
+        TranscriptionSegment(start=2.0, end=4.0, text="world"),
     ]
 
     # Save transcript
@@ -136,12 +136,12 @@ def test_load_and_save_transcript(tmp_path: Path) -> None:
     # Load transcript
     loaded_segments = load_transcript(transcript_file)
     assert len(loaded_segments) == 2
-    assert loaded_segments[0]["text"] == "Hello"
-    assert loaded_segments[1]["text"] == "world"
-    assert loaded_segments[0]["start"] == 0.0
-    assert loaded_segments[0]["end"] == 2.0
-    assert loaded_segments[1]["start"] == 2.0
-    assert loaded_segments[1]["end"] == 4.0
+    assert loaded_segments[0].text == "Hello"
+    assert loaded_segments[1].text == "world"
+    assert loaded_segments[0].start == 0.0
+    assert loaded_segments[0].end == 2.0
+    assert loaded_segments[1].start == 2.0
+    assert loaded_segments[1].end == 4.0
 
 
 def test_transcribe_with_length_filters(
@@ -181,9 +181,9 @@ def test_transcribe_with_length_filters(
 
         # Only segments between 1.5 and 10 seconds should be included
         assert len(segments) == 1
-        assert segments[0]["text"] == "Good length"
-        assert segments[0]["start"] == 16.0
-        assert segments[0]["end"] == 18.0
+        assert segments[0].text == "Good length"
+        assert segments[0].start == 16.0
+        assert segments[0].end == 18.0
 
         # Test caching with filters
         segments2 = transcribe_audio(
