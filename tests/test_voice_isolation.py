@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
+from audio2anki import cache
 from audio2anki.cache import clear_cache
 from audio2anki.voice_isolation import VoiceIsolationError, isolate_voice
 
@@ -80,6 +81,9 @@ def test_isolate_voice_basic(test_audio_file: Path, mock_api_response: MockRespo
 
 def test_isolate_voice_caching(test_audio_file: Path, mock_api_response: MockResponse) -> None:
     """Test that voice isolation results are cached."""
+    # Initialize cache to use FileCache
+    cache.init_cache(bypass=False)
+
     with patch("httpx.Client") as mock_client:
         mock_stream = MagicMock()
         mock_stream.__enter__.return_value = mock_api_response
@@ -87,11 +91,15 @@ def test_isolate_voice_caching(test_audio_file: Path, mock_api_response: MockRes
 
         # First call should use API
         path1 = isolate_voice(test_audio_file)
-        assert mock_client.return_value.__enter__.return_value.stream.call_count == 1
+        first_call_count = mock_client.return_value.__enter__().stream.call_count
+        assert first_call_count == 1
 
-        # Second call should use cache
+        # Second call should use cache (i.e. no additional API call)
         path2 = isolate_voice(test_audio_file)
-        assert mock_client.return_value.__enter__.return_value.stream.call_count == 1  # No additional API calls
+        second_call_count = mock_client.return_value.__enter__().stream.call_count
+        # Assert that the call count did not increase after the second call
+        assert second_call_count == first_call_count
+        # Optionally, assert that the cached path is the same
         assert path1 == path2
 
 

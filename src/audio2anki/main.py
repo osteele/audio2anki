@@ -160,9 +160,6 @@ class Pipeline:
             for stage in self.stages:
                 try:
                     progress.start_stage(stage.name)
-                    # Add bypass_cache to stage params if specified
-                    if self.options.bypass_cache:
-                        stage.params["bypass_cache"] = True
                     current_data = stage.process(current_data, progress, **stage.params)
                     progress.complete_stage()
                 except Exception as e:
@@ -385,7 +382,7 @@ def process_command(
     cache.init_cache(bypass=bypass_cache)
 
     # Create and run the pipeline
-    options = PipelineOptions(debug=debug)
+    options = PipelineOptions(debug=debug, bypass_cache=bypass_cache)
     pipeline = create_pipeline(options)
 
     # Add language parameters to both transcribe and translate stages

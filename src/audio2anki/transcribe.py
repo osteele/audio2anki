@@ -109,7 +109,6 @@ def transcribe_audio(
     language: str | None = None,
     min_length: float | None = None,
     max_length: float | None = None,
-    bypass_cache: bool = False,
 ) -> list[TranscriptionSegment]:
     """Transcribe audio using OpenAI Whisper API.
 
@@ -122,7 +121,6 @@ def transcribe_audio(
         language: Language code (e.g. "en", "zh", "ja")
         min_length: Minimum segment length in seconds
         max_length: Maximum segment length in seconds
-        bypass_cache: Whether to bypass the cache and force transcription
 
     Returns:
         List of transcription segments
@@ -145,9 +143,7 @@ def transcribe_audio(
         "max_length": max_length,
     }
 
-    if not bypass_cache and cache.cache_retrieve(
-        "transcribe", audio_file, cache_ext, version=1, extra_params=cache_params
-    ):
+    if cache.cache_retrieve("transcribe", audio_file, cache_ext, version=1, extra_params=cache_params):
         cache_path = Path(cache.get_cache_path("transcribe", cache.compute_file_hash(audio_file), cache_ext))
         segments = load_transcript(cache_path)
         if progress and task_id:
@@ -201,13 +197,10 @@ def transcribe_audio(
         segments.append(TranscriptionSegment(start=start, end=end, text=segment.text.strip()))
 
     # Save to cache
-    if not bypass_cache:
-        transcript_content = (
-            format_srt(segments)
-            if cache_ext == ".srt"
-            else "\n".join(f"{s.start}\t{s.end}\t{s.text}" for s in segments)
-        )
-        cache.cache_store("transcribe", audio_file, transcript_content.encode(), cache_ext, extra_params=cache_params)
+    transcript_content = (
+        format_srt(segments) if cache_ext == ".srt" else "\n".join(f"{s.start}\t{s.end}\t{s.text}" for s in segments)
+    )
+    cache.cache_store("transcribe", audio_file, transcript_content.encode(), cache_ext, extra_params=cache_params)
 
     # Save transcript if path provided
     if transcript_path:
