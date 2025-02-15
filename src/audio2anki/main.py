@@ -1,8 +1,8 @@
 """Main entry point for audio2anki."""
 
-import builtins
 import locale
 import logging
+import re
 from pathlib import Path
 
 import click
@@ -94,15 +94,22 @@ def process(
     # Print deck location and instructions
     console.print(f"\n[green]Deck created at:[/] {deck_dir}")
 
-    # Read and print README content with substituted media path
+    # Read and print only the header from README as Import Instructions in bold.
     readme_path = Path(deck_dir) / "README.md"
     if readme_path.exists():
-        with builtins.open(readme_path, "r", encoding="utf-8") as f:
-            instructions = f.read()
-            # Replace media folder reference with full path
-            instructions = instructions.replace("the `media` folder", f"{deck_dir}/media")
-            console.print("\n[bold]Import Instructions:[/]")
-            console.print(instructions)
+        content = readme_path.read_text(encoding="utf-8")
+        content = re.sub(r"^# (.*)", r"[bold]\1[/]", content, flags=re.MULTILINE)
+        import platform
+
+        alias_term = (
+            "alias"
+            if platform.system() == "Darwin"
+            else "shortcut"
+            if platform.system() == "Windows"
+            else "symbolic link"
+        )
+        content = content.replace("symbolic link", alias_term)
+        console.print(content)
 
 
 @cli.group()
