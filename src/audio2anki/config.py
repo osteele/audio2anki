@@ -2,10 +2,12 @@
 
 import logging
 import os
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import tomli_w
 import tomllib
 
 logger = logging.getLogger(__name__)
@@ -149,3 +151,100 @@ def validate_config(config: Config) -> list[str]:
         errors.append(f"transcription_provider must be one of: {', '.join(valid_transcription_providers)}")
 
     return errors
+
+
+def set_config_value(key: str, value: str) -> tuple[bool, str]:
+    """Set a configuration value.
+
+    Args:
+        key: The configuration key to set
+        value: The value to set (will be type-converted based on default config type)
+
+    Returns:
+        tuple of (success, message)
+    """
+    config = load_config()
+    config_dict = config.to_dict()
+
+    if key not in DEFAULT_CONFIG:
+        return False, f"Unknown configuration key: {key}"
+
+    default_type = type(DEFAULT_CONFIG[key])
+    converted_value: bool | int | str | None = None
+    try:
+        if default_type is bool:
+            converted_value = value.lower() in ("true", "1", "yes", "on")
+        elif default_type is int:
+            converted_value = int(value)
+        elif default_type is str:
+            converted_value = value  # Assuming the default is str
+    except ValueError:
+        return False, f"Invalid value for {key}. Expected {default_type.__name__}"
+
+    if converted_value is None:
+        return False, f"Invalid value for {key}. Expected {default_type.__name__}"
+
+    config_dict[key] = converted_value
+
+    # Validate the new configuration
+    new_config = Config.from_dict(config_dict)
+    errors = validate_config(new_config)
+    if errors:
+        return False, f"Invalid configuration: {', '.join(errors)}"
+
+    # Write the configuration
+    config_path = get_config_path()
+    ensure_config_dir()
+    try:
+        with open(config_path, "wb") as f:
+            tomli_w.dump(config_dict, f)
+        return True, f"Successfully set {key} to {converted_value}"
+    except Exception as e:
+        return False, f"Error writing configuration: {e}"
+
+
+def edit_config() -> tuple[bool, str]:
+    """Open the configuration file in the default editor.
+
+    Returns:
+        tuple of (success, message)
+    """
+    config_path = get_config_path()
+    ensure_config_dir()
+
+    if not config_path.exists():
+        create_default_config()
+
+    editor = os.environ.get("EDITOR", "nano")
+    try:
+        subprocess.run([editor, str(config_path)], check=True)
+
+        # Validate the edited configuration
+        try:
+            config = load_config()
+            errors = validate_config(config)
+            if errors:
+                return False, f"Invalid configuration: {', '.join(errors)}"
+            return True, "Configuration updated successfully"
+        except Exception as e:
+            return False, f"Error in configuration file: {e}"
+    except subprocess.CalledProcessError:
+        return False, "Editor exited with an error"
+    except Exception as e:
+        return False, f"Error opening editor: {e}"
+
+
+def reset_config() -> tuple[bool, str]:
+    """Reset the configuration to default values.
+
+    Returns:
+        tuple of (success, message)
+    """
+    config_path = get_config_path()
+    try:
+        if config_path.exists():
+            config_path.unlink()
+        create_default_config()
+        return True, "Configuration reset to defaults"
+    except Exception as e:
+        return False, f"Error resetting configuration: {e}"

@@ -47,6 +47,8 @@ export OPENAI_API_KEY=your-api-key-here
 audio2anki audio.mp3 --transcript transcript.txt
 ```
 
+For a complete list of commands, including cache and configuration management, see the [CLI documentation](./docs/cli.md).
+
 ### Common Use Cases
 
 Process a noisy recording with more aggressive silence removal:
