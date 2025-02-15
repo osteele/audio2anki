@@ -90,8 +90,9 @@ def create_anki_deck(
             if progress and task_id:
                 progress.update(task_id, advance=1)
 
-    # Create README.md with import instructions
-    readme_content = """# Anki Deck Import Instructions
+    # Update README content with OS-specific media path
+    media_path = get_anki_media_dir()
+    readme_content = f"""# Anki Deck Import Instructions
 
 1. Open Anki
 2. Click "File" > "Import"
@@ -101,7 +102,9 @@ def create_anki_deck(
    - Set "Deck" to your desired deck name
    - Set "Fields separated by" to "Tab"
    - Check "Allow HTML in fields"
-5. The media files will be automatically copied to your Anki media folder.
+5. Import the Audio:
+   - Copy all files from: the `media` folder
+   - Paste them into: {media_path}
 
 Note: The media files are named with a hash of the source audio to avoid conflicts.
 A symbolic link to your Anki media folder is provided for convenience.

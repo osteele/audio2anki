@@ -1,5 +1,6 @@
 """Main entry point for audio2anki."""
 
+import builtins
 import locale
 import logging
 from pathlib import Path
@@ -31,7 +32,7 @@ def get_system_language() -> str:
             return "english"
 
         # Map common language codes to full names
-        language_map = {
+        language_map: dict[str, str] = {
             "en": "english",
             "zh": "chinese",
             "ja": "japanese",
@@ -88,7 +89,20 @@ def process(
         clear_cache=should_clear_cache,
         debug=debug,
     )
-    run_pipeline(Path(input_file), console, options)
+    deck_dir = str(run_pipeline(Path(input_file), console, options))
+
+    # Print deck location and instructions
+    console.print(f"\n[green]Deck created at:[/] {deck_dir}")
+
+    # Read and print README content with substituted media path
+    readme_path = Path(deck_dir) / "README.md"
+    if readme_path.exists():
+        with builtins.open(readme_path, "r", encoding="utf-8") as f:
+            instructions = f.read()
+            # Replace media folder reference with full path
+            instructions = instructions.replace("the `media` folder", f"{deck_dir}/media")
+            console.print("\n[bold]Import Instructions:[/]")
+            console.print(instructions)
 
 
 @cli.group()
