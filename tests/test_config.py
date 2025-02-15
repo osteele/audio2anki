@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from pytest import MonkeyPatch
+from tests.conftest import CacheTestEnv
 
 from audio2anki.config import (
     CONFIG_FILE,
@@ -155,3 +156,38 @@ def test_config_to_from_dict() -> None:
     assert restored_config.cache_expiry_days == original_config.cache_expiry_days
     assert restored_config.voice_isolation_provider == original_config.voice_isolation_provider
     assert restored_config.transcription_provider == original_config.transcription_provider
+
+
+@pytest.fixture
+def config(test_env: CacheTestEnv) -> Config:
+    """Create a test configuration."""
+    # Now the config module will use the test directory
+    from audio2anki import config
+
+    return config.load_config()
+
+
+def test_load_config(test_env: CacheTestEnv) -> None:
+    """Test loading configuration."""
+    # Import config after environment is set up
+    from audio2anki import config
+
+    cfg = config.load_config()
+    assert isinstance(cfg, Config)
+    assert cfg.clean_files is True  # default value
+
+
+def test_validate_config(test_env: CacheTestEnv) -> None:
+    """Test configuration validation."""
+    from audio2anki import config
+
+    cfg = Config(
+        clean_files=True,
+        use_cache=True,
+        cache_expiry_days=7,
+        voice_isolation_provider="eleven_labs",
+        transcription_provider="openai_whisper",
+    )
+
+    errors = config.validate_config(cfg)
+    assert not errors
