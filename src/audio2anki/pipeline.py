@@ -114,8 +114,12 @@ class PipelineProgress:
             self.progress.update(self.stage_tasks[self.current_stage], completed=completed)
 
 
-def run_pipeline(input_path: Path, console: Console, options: PipelineOptions) -> PipelineContext:
-    """Run the audio processing pipeline with minimal stage coordination."""
+def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -> Path:
+    """Run the audio processing pipeline.
+
+    Returns:
+        Path: The path to the generated deck directory
+    """
     if options.clear_cache:
         from . import cache
 
@@ -125,7 +129,7 @@ def run_pipeline(input_path: Path, console: Console, options: PipelineOptions) -
     with PipelineProgress.create(console) as progress:
         try:
             # Initialize context with input file and options
-            context = PipelineContext.from_options(input_path, options)
+            context = PipelineContext.from_options(input_file, options)
 
             # Run each stage in sequence
             progress.start_stage("Transcoding audio")
@@ -148,7 +152,7 @@ def run_pipeline(input_path: Path, console: Console, options: PipelineOptions) -
             context = generate_deck(context, progress)
             progress.complete_stage()
 
-            return context
+            return context.primary
 
         except Exception as e:
             logging.error(f"Pipeline failed: {str(e)}")
