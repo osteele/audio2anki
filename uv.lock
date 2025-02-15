@@ -43,7 +43,7 @@ dependencies = [
     { name = "rich" },
 ]
 
-[package.dev-dependencies]
+[package.optional-dependencies]
 dev = [
     { name = "pydub-stubs" },
     { name = "pyright" },
@@ -59,15 +59,11 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.26.0" },
     { name = "openai", specifier = ">=1.8.0" },
     { name = "pydub", specifier = ">=0.25.1" },
+    { name = "pydub-stubs", marker = "extra == 'dev'", specifier = ">=0.25.1.5" },
+    { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.392.post0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.4" },
     { name = "rich", specifier = ">=13.7.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pydub-stubs", specifier = ">=0.25.1.5" },
-    { name = "pyright", specifier = ">=1.1.392.post0" },
-    { name = "pytest", specifier = ">=7.4.4" },
-    { name = "ruff", specifier = ">=0.1.9" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.9" },
 ]
 
 [[package]]
