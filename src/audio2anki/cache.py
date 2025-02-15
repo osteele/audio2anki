@@ -6,7 +6,9 @@ import logging
 import os
 import shutil
 import sqlite3
+import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any, NoReturn, Protocol, TypedDict
 
@@ -245,6 +247,61 @@ def compute_file_hash(file_path: str | Path) -> str:
         for byte_block in iter(lambda: f.read(4096), b""):
             sha256_hash.update(byte_block)
     return sha256_hash.hexdigest()
+
+
+def get_cache_info() -> dict[str, Any]:
+    """Get information about the cache.
+
+    Returns:
+        Dictionary containing cache information including:
+        - size: Total size in bytes
+        - file_count: Number of cached files
+        - last_modified: Timestamp of most recent modification
+    """
+    cache_dir = CACHE_DIR
+    if not cache_dir.exists():
+        return {"size": 0, "file_count": 0, "last_modified": None}
+
+    total_size = 0
+    file_count = 0
+    latest_mtime = 0
+
+    for path in cache_dir.rglob("*"):
+        if path.is_file():
+            file_count += 1
+            stats = path.stat()
+            total_size += stats.st_size
+            latest_mtime = max(latest_mtime, stats.st_mtime)
+
+    return {
+        "size": total_size,
+        "file_count": file_count,
+        "last_modified": datetime.fromtimestamp(latest_mtime) if latest_mtime > 0 else None,
+    }
+
+
+def open_cache_directory() -> tuple[bool, str]:
+    """Open the cache directory in the system file explorer.
+
+    Returns:
+        tuple of (success, message)
+    """
+    cache_dir = CACHE_DIR
+    if not cache_dir.exists():
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        if sys.platform == "darwin":  # macOS
+            subprocess.run(["open", str(cache_dir)], check=True)
+        elif sys.platform == "win32":  # Windows
+            subprocess.run(["explorer", str(cache_dir)], check=True)
+        else:  # Linux and others
+            subprocess.run(["xdg-open", str(cache_dir)], check=True)
+        return True, f"Opened cache directory: {cache_dir}"
+    except subprocess.CalledProcessError:
+        return False, "Failed to open cache directory"
+    except Exception as e:
+        return False, f"Error opening cache directory: {e}"
 
 
 # Global cache instance
