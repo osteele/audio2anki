@@ -9,9 +9,11 @@ from typing import Any
 
 import pytest
 from pytest import MonkeyPatch
+from tests.conftest import CacheTestEnv
 
 from audio2anki.cache import (
     CACHE_DIR,
+    Cache,
     cache_retrieve,
     cache_store,
     clear_cache,
@@ -32,10 +34,10 @@ def temp_input_file() -> Generator[str, None, None]:
 
 
 @pytest.fixture
-def setup_cache() -> Generator[str, None, None]:
+def setup_cache() -> Generator[Path, None, None]:
     """Set up and tear down the cache for each test."""
     init_cache()
-    yield CACHE_DIR
+    yield Path(CACHE_DIR)
     clear_cache()
 
 
@@ -48,11 +50,11 @@ def test_compute_file_hash(temp_input_file: str) -> None:
     assert len(hash1) == 64  # SHA-256 produces 64 character hex strings
 
 
-def test_init_cache(setup_cache: str) -> None:
+def test_init_cache(setup_cache: Path) -> None:
     """Test cache initialization."""
-    cache_dir: str = setup_cache
-    assert Path(cache_dir).exists()
-    assert (Path(cache_dir) / "cache.db").exists()
+    cache_dir: Path = setup_cache
+    assert cache_dir.exists()
+    assert (cache_dir / "cache.db").exists()
 
 
 def test_get_cache_path() -> None:
@@ -62,29 +64,29 @@ def test_get_cache_path() -> None:
     assert "audio2anki" in str(path)
 
 
-def test_cache_store_and_retrieve(temp_input_file: str, setup_cache: str) -> None:
+def test_cache_store_and_retrieve(temp_input_file: str, setup_cache: Path) -> None:
     """Test storing and retrieving data from cache."""
     test_data = b"test data"
     stage_name = "test_stage"
     extension = ".txt"
 
     # Store data
-    cache_path = cache_store(stage_name, temp_input_file, test_data, extension)
-    assert Path(cache_path).exists()
+    cache_path = Path(cache_store(stage_name, temp_input_file, test_data, extension))
+    assert cache_path.exists()
 
     # Retrieve data
     hit = cache_retrieve(stage_name, temp_input_file, extension)
     assert hit
 
 
-def test_cache_expiry(temp_input_file: str, setup_cache: str, monkeypatch: MonkeyPatch) -> None:
+def test_cache_expiry(temp_input_file: str, setup_cache: Path, monkeypatch: MonkeyPatch) -> None:
     """Test cache expiry functionality."""
     test_data = b"test data"
     stage_name = "test_stage"
     extension = ".txt"
 
     # Store data
-    cache_path = cache_store(stage_name, temp_input_file, test_data, extension)
+    cache_path = Path(cache_store(stage_name, temp_input_file, test_data, extension))
 
     # Mock time to simulate passage of time
     future_time = time.time() + 8 * 24 * 60 * 60  # 8 days in the future
@@ -95,10 +97,10 @@ def test_cache_expiry(temp_input_file: str, setup_cache: str, monkeypatch: Monke
     # Use different extra parameters to force miss
     hit = cache_retrieve(stage_name, temp_input_file, extension, extra_params={"version": 2})
     assert not hit
-    assert Path(cache_path).exists()  # File still exists since we don't have expiry
+    assert cache_path.exists()  # File still exists since we don't have expiry
 
 
-def test_cache_with_extra_params(temp_input_file: str, setup_cache: str) -> None:
+def test_cache_with_extra_params(temp_input_file: str, setup_cache: Path) -> None:
     """Test cache behavior with extra parameters."""
     test_data = b"test data"
     stage_name = "test_stage"
@@ -118,35 +120,34 @@ def test_cache_with_extra_params(temp_input_file: str, setup_cache: str) -> None
     assert hit
 
 
-def test_cache_delete(temp_input_file: str, setup_cache: str) -> None:
+def test_cache_delete(temp_input_file: str, setup_cache: Path) -> None:
     """Test cache deletion."""
     test_data = b"test data"
     stage_name = "test_stage"
     extension = ".txt"
 
     # Store data
-    cache_path = cache_store(stage_name, temp_input_file, test_data, extension)
-    cache_file = Path(cache_path)
-    assert cache_file.exists()
+    cache_path = Path(cache_store(stage_name, temp_input_file, test_data, extension))
+    assert cache_path.exists()
 
     # Delete cache
-    cache_file.unlink()
-    assert not cache_file.exists()
+    cache_path.unlink()
+    assert not cache_path.exists()
 
     # Retrieve should return False
     hit = cache_retrieve(stage_name, temp_input_file, extension)
     assert not hit
 
 
-def test_clear_cache(temp_input_file: str, setup_cache: str) -> None:
+def test_clear_cache(temp_input_file: str, setup_cache: Path) -> None:
     """Test clearing the entire cache."""
     test_data = b"test data"
     stage_name = "test_stage"
     extension = ".txt"
 
     # Store some data
-    cache_path = cache_store(stage_name, temp_input_file, test_data, extension)
-    assert Path(cache_path).exists()
+    cache_path = Path(cache_store(stage_name, temp_input_file, test_data, extension))
+    assert cache_path.exists()
 
     # Clear cache
     clear_cache()
@@ -154,4 +155,34 @@ def test_clear_cache(temp_input_file: str, setup_cache: str) -> None:
     # Cache should be empty
     hit = cache_retrieve(stage_name, temp_input_file, extension)
     assert not hit
-    assert not Path(cache_path).exists()
+    assert not cache_path.exists()
+
+
+@pytest.fixture
+def cache(test_env: CacheTestEnv) -> Cache:
+    """Create a test cache instance."""
+    # Import cache after environment is set up
+    from audio2anki.cache import FileCache
+
+    return FileCache(cache_dir=test_env["cache_dir"])
+
+
+def test_file_cache(test_env: CacheTestEnv, tmp_path: Path) -> None:
+    """Test FileCache operations."""
+    from audio2anki.cache import FileCache
+
+    # Create a test file
+    test_file = tmp_path / "test.txt"
+    test_file.write_text("test content")
+
+    # Initialize cache with test directory
+    cache = FileCache(cache_dir=test_env["cache_dir"])
+
+    # Test cache operations
+    assert not cache.retrieve("test", test_file, ".processed")
+
+    # Store something in cache
+    cache.store("test", test_file, b"processed content", ".processed")
+
+    # Should now find it in cache
+    assert cache.retrieve("test", test_file, ".processed")
