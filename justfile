@@ -18,7 +18,7 @@ lint:
 
 # Run tests
 test *ARGS:
-    uv run --dev pytest tests/ {{ARGS}}
+    uv run --dev python -m pytest tests/ {{ARGS}}
 
 # Install the package in development mode
 install:
