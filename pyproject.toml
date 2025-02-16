@@ -12,8 +12,15 @@ dependencies = [
     "deepl>=1.16.1",
     "gradio-client>=0.10.1",
     "tomli-w>=1.2.0",
+    "librosa",
+    "soundfile",
+    "numpy",
 ]
-requires-python = ">=3.10"
+
+requires-python = ">=3.10,<3.13"
+# 3.13 removes the aifc and sunau modules.
+# librosa depends on audioread which uses these.
+# https://github.com/beetbox/audioread/issues/144
 
 [build-system]
 requires = ["hatchling"]
@@ -47,6 +54,7 @@ known-first-party = ["audio2anki"]
 
 [tool.pyright]
 reportIncompatibleMethodOverride = "none"
+stubPath = "stubs"
 
 [project.scripts]
 audio2anki = "audio2anki.main:main"
