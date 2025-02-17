@@ -109,7 +109,7 @@ def create_anki_deck(
     - Set "Fields separated by" to "Tab"
 5. Import the audio files:
     - Copy all files from: the `media` folder
-    - Paste them into: {media_path}
+    - Paste them into: `{media_path}`
 
 Note: The media files are named with a hash of the source audio to avoid conflicts.
 {article.capitalize()} {alias_term} to your Anki media folder is provided for convenience.

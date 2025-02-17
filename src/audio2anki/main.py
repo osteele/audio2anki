@@ -7,6 +7,7 @@ from pathlib import Path
 
 import click
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.table import Table
 
 from .cache import clear_cache, get_cache_info, open_cache_directory
@@ -94,13 +95,13 @@ def process(
     # Print deck location and instructions
     console.print(f"\n[green]Deck created at:[/] {deck_dir}")
 
-    # Read and print only the header from README as Import Instructions in bold.
+    # Read and render README content
     readme_path = Path(deck_dir) / "README.md"
     if readme_path.exists():
         content = readme_path.read_text(encoding="utf-8")
-        content = re.sub(r"^# (.*)", r"[bold]\1[/]", content, flags=re.MULTILINE)
-        import platform
 
+        # Replace "symbolic link" with platform-specific term
+        import platform
         alias_term = (
             "alias"
             if platform.system() == "Darwin"
@@ -109,7 +110,10 @@ def process(
             else "symbolic link"
         )
         content = content.replace("symbolic link", alias_term)
-        console.print(content)
+
+        # Render markdown content
+        md = Markdown(content)
+        console.print(md)
 
 
 @cli.group()
