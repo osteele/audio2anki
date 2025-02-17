@@ -7,102 +7,165 @@
 
 ## Overview
 
-This document describes a generalized pipeline architecture for the audio-to-anki application, which processes audio and video inputs to generate Anki card decks. The design codifies each stage of the processing as an independent operation within a configurable list, and integrates a central caching mechanism and configuration system. This modular approach improves auditability, flexibility, and future extensibility.
+This document describes a generalized pipeline architecture for the audio-to-anki application, which processes audio and video inputs to generate Anki card decks. The design uses an artifact-aware pipeline where each stage explicitly declares its inputs and outputs. This approach improves type safety, testability, and makes data dependencies clear.
 
 ## Pipeline Architecture
 
-The application pipeline is reified as an ordered list of operations. Each operation represents a distinct processing stage, such as:
-
-- **Audio Channel Transcoding:** Includes extraction of an audio channel from a video file.
-- **Voice Isolation:** Noise removal and audio cleaning.
-- **Transcription:** Converting audio to text.
-- **Audio File Slicing:** Dividing the audio into manageable segments.
-- **Card Deck Generation:** Generating the Anki flashcard deck from processed data.
+The pipeline is implemented as a sequence of Python functions, where each function:
+1. Explicitly declares its inputs through parameter names
+2. Produces a single output (or tuple of outputs) that becomes an artifact for subsequent stages
+3. Receives a context object containing pipeline-wide configuration and progress tracking
 
 ### Key Features
 
-- **Modularity:** Each operation is implemented as a self-contained unit that adheres to a common interface, allowing for dynamic composition of the pipeline via CLI options.
-- **Progress Reporting:** The pipeline maintains and displays progress by enumerating the list of operations and their status (pending, in-progress, completed, or failed).
-- **Caching Integration:** Intermediate results from each operation are cached through a centralized caching mechanism, enabling efficient re-runs and recovery from failures.
+- **Explicit Data Flow:** Each function's inputs and outputs are clearly defined through its signature
+- **Static Validation:** The pipeline validates all required artifacts are available before execution
+- **Type Safety:** Comprehensive type hints throughout the codebase
+- **Progress Tracking:** Integrated progress reporting for each pipeline stage
+- **Error Handling:** Clear error messages when required artifacts are missing
 
 ## Pipeline Operations
 
 Each operation in the pipeline has the following structure:
 
-- **Name:** A human-readable identifier (e.g., 'Transcoding', 'Voice Isolation').
-- **Function:** The executable code for the operation.
-- **Dependencies:** Any prerequisites or limits (e.g., maximum file size, duration) that are enforced before execution.
-- **Output Handling:** Intermediate results are stored and retrieved from the cache if available.
+```python
+def operation_name(
+    context: PipelineContext,
+    required_artifact1: Path,
+    required_artifact2: str,
+    optional_param: int | None = None,
+) -> Path:  # or tuple[Path, Path] for multiple outputs
+    """Process artifacts and return new ones.
+    
+    Args:
+        context: Pipeline-wide configuration and progress
+        required_artifact1: First required input
+        required_artifact2: Second required input
+        optional_param: Optional configuration
+        
+    Returns:
+        Path to the generated artifact
+    """
+```
+
+### Core Components
+
+1. **PipelineContext:**
+   ```python
+   @dataclass
+   class PipelineContext:
+       """Holds pipeline state and configuration."""
+       progress: PipelineProgress
+       source_language: str = "chinese"
+       target_language: str | None = None
+   ```
+
+2. **Pipeline Runner:**
+   - Manages the execution of pipeline stages
+   - Tracks artifacts in a dictionary
+   - Validates artifact availability before execution
+   - Handles errors and progress reporting
+
+3. **Pipeline Validation:**
+   ```python
+   def validate_pipeline(
+       pipeline: list[PipelineFunction],
+       initial_artifacts: dict[str, Any]
+   ) -> None:
+       """Validate that all required artifacts will be available."""
+   ```
 
 ### Detailed Operations
 
 1. **Audio Channel Transcoding:**
-   - Transcode an audio or video file to an audio file that is suitable for downstream processing.
+   ```python
+   def transcode(context: PipelineContext, input_path: Path) -> Path:
+       """Transcode an audio/video file to an audio file."""
+   ```
 
 2. **Voice Isolation:**
-   - Performs noise removal and audio cleaning.
-   - Offers two provider options: one wrapping DEMUCS to run locally and one leveraging the Eleven Labs API.
+   ```python
+   def voice_isolation(context: PipelineContext, transcode: Path) -> Path:
+       """Isolate voice from background noise."""
+   ```
 
 3. **Transcription:**
-   - Converts audio to text and produces an SRT file.
-   - Users can optionally supply an existing SRT file to bypass this stage for intermediate testing.
+   ```python
+   def transcribe(context: PipelineContext, voice_isolation: Path) -> Path:
+       """Transcribe audio to text and produce an SRT file."""
+   ```
 
-4. **Audio File Slicing:**
-   - Splits the audio into segments.
-   - Multiple instances can be configured with different file size and duration settings to accommodate provider restrictions.
+4. **Translation:**
+   ```python
+   def translate(
+       context: PipelineContext,
+       transcribe: Path
+   ) -> tuple[Path, Path]:  # (translation, pronunciation)
+       """Translate text and generate pronunciation guide."""
+   ```
 
-5. **Optional Sentence Selection:**
-   - An optional stage that processes the transcript to select sentences.
-   - Strategies include selecting all sentences, filtering for a target language, or using an LLM service for selection.
+5. **Card Deck Generation:**
+   ```python
+   def generate_deck(
+       context: PipelineContext,
+       voice_isolation: Path,
+       transcribe: Path,
+       translate: tuple[Path, Path]
+   ) -> Path:
+       """Generate Anki flashcard deck."""
+   ```
 
-6. **Card Deck Generation:**
-   - Generates Anki flashcard decks from the processed data. A flashcard deck is stored as a directory with a tab-separated `deck.txt`, a folder of media files, a README that describes how to import the deck, and an alias or shortcut to the location where the media files should be copied. Media files have names that include a hash of the source file to prevent conflicts when importing multiple decks.
+## Artifact Management
 
-CLI options can be provided to modify the set or order of operations. For example, a user might skip certain stages (e.g., voice isolation) or insert custom operations.
+- **Naming:** By default, artifacts are named after the function that produces them
+- **Storage:** Artifacts are tracked in a dictionary during pipeline execution
+- **Validation:** The pipeline validates all required artifacts are available before starting
+- **Multiple Outputs:** Functions can return tuples for multiple artifacts
 
-## Caching Mechanism
+## Progress Tracking
 
-A central caching mechanism has the following features:
+Progress tracking is integrated into the pipeline through the `PipelineProgress` class:
+- Each stage automatically gets progress tracking based on its function name
+- Progress updates are accessible through the context object
+- Supports both overall pipeline progress and individual stage progress
 
-- **Standard Location:** The cache is stored at `$HOME/.cache/audio2anki`, where intermediate results are cached.
-- **Size and Expiry Management:** The cache system will support commands to report its location and size, as well as expire old entries. Expiration settings will be configurable.
-- **Disable Option:** Users may disable caching via a CLI option if desired.
-- **Automatic Expiry:** When using the cache, entries older than a configured duration are automatically expired.
+## Error Handling
 
-## Configuration System
-
-The application will use a configuration file stored at `$HOME/.config/audio2anki/config.toml`. Features include:
-
-- **Central Config File:** It contains settings governing the default behavior of the pipeline (e.g., file cleaning defaults, cache usage, cache expiry durations, provider selection, etc.).
-- **CLI Options:** Commands to display the config file location, to modify configuration settings, or to open the config file in an editor.
-- **Dynamic Adjustments:** Changes made via CLI are applied immediately to subsequent runs.
+The pipeline includes several layers of error handling:
+1. **Static Validation:** Catches missing artifact errors before execution
+2. **Runtime Errors:** Each stage has specific error handling
+3. **Progress Updates:** Error states are reflected in progress tracking
 
 ## CLI Integration
 
-The command-line interface will provide the following functionalities:
+The command-line interface provides:
+- Full pipeline execution
+- Individual stage execution
+- Progress display
+- Error reporting
 
-**Pipeline Execution Options:**
-- Run the entire pipeline or select specific stages (e.g., only voice isolation, transcription, or card generation) via CLI flags.
+## Testing
 
-**Provider Selection:**
-- Choose specific providers for stages that support multiple implementations (e.g., choose between local DEMUCS or Eleven Labs API for voice isolation).
+The artifact-aware design improves testability:
+- Each stage can be tested in isolation
+- Artifacts can be mocked or replaced
+- Pipeline validation can be tested separately
+- Progress tracking can be mocked
 
-**SRT File Input:**
-- Supply an existing SRT file to bypass the transcription stage when needed.
+## Future Considerations
 
-**Progress Display:**
-- Show real-time progress as each operation is initiated and completed.
+1. **Type Safety:**
+   - Consider using generics for stronger artifact typing
+   - Add specific types for different artifact categories
 
-**Cache Management:**
-- Provide commands to print cache information (location and size), expire old entries, or delete the entire cache.
+2. **Multiple Outputs:**
+   - Consider a more structured approach to handling multiple outputs
+   - Possibly use dataclasses or named tuples
 
-**Configuration Management:**
-- Commands to display, edit, and update the configuration file interactively.
+3. **Artifact Naming:**
+   - Add decorator support for custom artifact naming
+   - Support for multiple artifacts per function
 
-**Testing and Linting:**
-- Integration with the tooling commands (e.g., `just check`, `just test`) to run automated quality checks.
-
-## Extensibility Considerations
-
-- **Dynamic Operation Lists:** Future extensions could allow plug-in operations by scanning designated directories for additional pipeline modules.
-- **Custom Attributes:** Each operation may include metadata (such as estimated processing time and resource requirements) to better plan execution.
+4. **Error Handling:**
+   - Add specific exception types for different pipeline errors
+   - Improve error messages and recovery options

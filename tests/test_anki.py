@@ -6,7 +6,7 @@ from unittest.mock import Mock
 import pytest
 from rich.progress import Progress, TaskID
 
-from audio2anki.anki import create_anki_deck, process_deck
+from audio2anki.anki import create_anki_deck, generate_anki_deck
 from audio2anki.models import AudioSegment, TranscriptionSegment
 from audio2anki.pipeline import PipelineProgress
 
@@ -131,7 +131,7 @@ def test_create_anki_deck_with_progress(segments: list[AudioSegment], tmp_path: 
     assert (deck_dir / "media").exists()
 
 
-def test_process_deck(
+def test_generate_anki_deck(
     segments: list[AudioSegment],
     tmp_path: Path,
     mock_pipeline_progress: PipelineProgress,
@@ -153,6 +153,13 @@ def test_process_deck(
         f.write("1\n00:00:00,000 --> 00:00:02,000\nNǐ hǎo\n\n")
         f.write("2\n00:00:02,000 --> 00:00:04,000\nXièxie\n")
 
+    # Create test audio file
+    from pydub import AudioSegment as PydubSegment
+
+    audio = PydubSegment.silent(duration=4000)  # 4 seconds of silence
+    audio_file = tmp_path / "test_audio.mp3"
+    audio.export(str(audio_file), format="mp3")
+
     # Create deck directory structure
     deck_dir = tmp_path / "deck"
     deck_dir.mkdir()
@@ -165,15 +172,17 @@ def test_process_deck(
     old_cwd = os.getcwd()
     os.chdir(tmp_path)
     try:
-        deck_dir = process_deck(
+        deck_dir = generate_anki_deck(
             translation_file,
             mock_pipeline_progress,
             transcription_file=transcript_file,
             pronunciation_file=pronunciation_file,
             source_language="chinese",
             target_language="english",
+            input_audio_file=audio_file,
         )
 
+        # Check output
         assert deck_dir.exists()
         assert deck_dir.is_dir()
         assert (deck_dir / "deck.txt").exists()
@@ -185,7 +194,20 @@ def test_process_deck(
             content = f.read().splitlines()
             assert len(content) == 3  # Header + 2 segments
             assert content[0] == "Hanzi\tPinyin\tEnglish\tAudio"
-            assert content[1].startswith("你好\tNǐ hǎo\tHello\t")  # Audio filename will be dynamic
-            assert content[2].startswith("谢谢\tXièxie\tThank you\t")
+            # Split each line into fields and check each field separately
+            fields1 = content[1].split("\t")
+            fields2 = content[2].split("\t")
+            # Check text
+            assert fields1[0] == "你好"
+            assert fields2[0] == "谢谢"
+            # Check pronunciation
+            assert fields1[1] == "Nǐ hǎo"
+            assert fields2[1] == "Xièxie"
+            # Check translation
+            assert fields1[2] == "Hello"
+            assert fields2[2] == "Thank you"
+            # Check audio (just verify it exists)
+            assert fields1[3].startswith("[sound:")
+            assert fields2[3].startswith("[sound:")
     finally:
         os.chdir(old_cwd)

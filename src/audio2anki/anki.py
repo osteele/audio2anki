@@ -139,7 +139,11 @@ Note: The media files are named with a hash of the source audio to avoid conflic
     return deck_dir
 
 
-def process_deck(input_data: str | Path, progress: "PipelineProgress", **kwargs: Any) -> Path:
+def generate_anki_deck(
+    input_data: str | Path,
+    progress: PipelineProgress,
+    **kwargs: Any,
+) -> Path:
     """Process deck generation stage in the pipeline.
 
     Args:
@@ -151,6 +155,11 @@ def process_deck(input_data: str | Path, progress: "PipelineProgress", **kwargs:
         Path to the generated deck directory
     """
     from .transcribe import load_transcript
+
+    # Type assertion to handle the progress object correctly
+    pipeline_progress = progress
+    if not pipeline_progress:
+        raise TypeError("Expected PipelineProgress object")
 
     input_path = Path(input_data)
     deck_dir = Path.cwd() / "deck"  # Use existing deck directory
@@ -180,8 +189,8 @@ def process_deck(input_data: str | Path, progress: "PipelineProgress", **kwargs:
 
     # Get the task ID for the current stage
     task_id = None
-    if progress.current_stage:
-        task_id = progress.stage_tasks.get(progress.current_stage)
+    if pipeline_progress.current_stage:
+        task_id = pipeline_progress.stage_tasks.get(pipeline_progress.current_stage)
 
     # Get the original audio file path from kwargs
     input_audio_file = kwargs.get("input_audio_file")
@@ -193,7 +202,7 @@ def process_deck(input_data: str | Path, progress: "PipelineProgress", **kwargs:
         translation_segments,
         deck_dir.parent,  # Use parent directory since create_anki_deck will append 'deck'
         task_id,
-        progress.progress,
+        pipeline_progress.progress,
         input_audio_file=input_audio_file,
         source_language=kwargs.get("source_language"),
         target_language=kwargs.get("target_language"),

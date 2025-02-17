@@ -2,7 +2,6 @@
 
 import locale
 import logging
-import re
 from pathlib import Path
 
 import click
@@ -102,6 +101,7 @@ def process(
 
         # Replace "symbolic link" with platform-specific term
         import platform
+
         alias_term = (
             "alias"
             if platform.system() == "Darwin"

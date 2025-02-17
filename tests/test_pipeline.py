@@ -6,7 +6,7 @@ from unittest.mock import Mock
 import pytest
 from rich.progress import Progress
 
-from audio2anki.pipeline import PipelineContext, PipelineProgress, generate_deck
+from audio2anki.pipeline import PipelineContext, PipelineProgress, generate_deck, produces_artifacts, validate_pipeline
 
 
 @pytest.fixture
@@ -26,6 +26,46 @@ def mock_pipeline_progress(mock_progress: Progress) -> PipelineProgress:
     progress.stage_tasks = {"generate_deck": Mock()}
     progress.update_stage = Mock()
     return progress
+
+
+def test_validate_pipeline() -> None:
+    """Test pipeline validation."""
+
+    @produces_artifacts(output1=Path)
+    def func1(context: PipelineContext, input_path: Path) -> Path:
+        return Path("output1")
+
+    @produces_artifacts(output2=Path)
+    def func2(context: PipelineContext, output1: Path) -> Path:
+        return Path("output2")
+
+    @produces_artifacts(output3=Path, output4=Path)
+    def func3(context: PipelineContext, output2: Path) -> tuple[Path, Path]:
+        return Path("output3"), Path("output4")
+
+    @produces_artifacts(output5=Path)
+    def func4(context: PipelineContext, missing: Path) -> Path:
+        return Path("output5")
+
+    # Test valid pipeline with single artifacts
+    pipeline = [func1, func2]
+    initial_artifacts = {"input_path": Path("input.mp3")}
+    validate_pipeline(pipeline, initial_artifacts)  # Should not raise
+
+    # Test valid pipeline with multiple artifacts
+    pipeline = [func1, func2, func3]
+    validate_pipeline(pipeline, initial_artifacts)  # Should not raise
+
+    # Test invalid pipeline (missing dependency)
+    pipeline = [func1, func4]
+    with pytest.raises(ValueError) as exc_info:
+        validate_pipeline(pipeline, initial_artifacts)
+    assert "missing" in str(exc_info.value)
+
+    # Test that artifacts from multi-output functions are available
+    pipeline = [func1, func2, func3]
+    initial_artifacts = {"input_path": Path("input.mp3")}
+    validate_pipeline(pipeline, initial_artifacts)
 
 
 def test_generate_deck(tmp_path: Path, mock_pipeline_progress: PipelineProgress) -> None:
@@ -55,10 +95,7 @@ def test_generate_deck(tmp_path: Path, mock_pipeline_progress: PipelineProgress)
 
     # Create context
     context = PipelineContext(
-        primary=translation_file,
-        isolated_audio=audio_file,
-        transcription_srt=transcript_file,
-        pronunciation_srt=pronunciation_file,
+        progress=mock_pipeline_progress,
         source_language="chinese",
         target_language="english",
     )
@@ -69,11 +106,16 @@ def test_generate_deck(tmp_path: Path, mock_pipeline_progress: PipelineProgress)
     old_cwd = os.getcwd()
     os.chdir(tmp_path)
     try:
-        # Run deck generation
-        context = generate_deck(context, mock_pipeline_progress)
+        # Run deck generation with artifacts
+        deck_dir = generate_deck(
+            context,
+            voice_isolation=audio_file,
+            transcribe=transcript_file,
+            translation=translation_file,
+            pronunciation=pronunciation_file,
+        )
 
         # Check output
-        deck_dir = Path.cwd() / "deck"
         assert deck_dir.exists()
         assert deck_dir.is_dir()
         assert (deck_dir / "deck.txt").exists()
