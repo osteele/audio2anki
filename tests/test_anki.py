@@ -6,7 +6,7 @@ from unittest.mock import Mock
 import pytest
 from rich.progress import Progress, TaskID
 
-from audio2anki.anki import create_anki_deck, process_deck
+from audio2anki.anki import create_anki_deck, generate_anki_deck
 from audio2anki.models import AudioSegment, TranscriptionSegment
 from audio2anki.pipeline import PipelineProgress
 
@@ -131,7 +131,7 @@ def test_create_anki_deck_with_progress(segments: list[AudioSegment], tmp_path: 
     assert (deck_dir / "media").exists()
 
 
-def test_process_deck(
+def test_generate_anki_deck(
     segments: list[AudioSegment],
     tmp_path: Path,
     mock_pipeline_progress: PipelineProgress,
@@ -165,7 +165,7 @@ def test_process_deck(
     old_cwd = os.getcwd()
     os.chdir(tmp_path)
     try:
-        deck_dir = process_deck(
+        deck_dir = generate_anki_deck(
             translation_file,
             mock_pipeline_progress,
             transcription_file=transcript_file,

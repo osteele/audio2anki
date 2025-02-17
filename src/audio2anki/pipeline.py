@@ -1,10 +1,13 @@
 """Audio processing pipeline module."""
 
+import inspect
 import logging
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import wraps
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar, Union
 
 from rich.console import Console
 from rich.progress import (
@@ -19,6 +22,32 @@ from rich.progress import (
 
 from .transcoder import transcode_audio
 
+T = TypeVar("T")
+Artifact = Any  # Replace with more specific type as needed
+PipelineFunction = Callable[..., Artifact]
+
+
+def produces_artifacts(**artifacts: Any) -> Callable[[PipelineFunction], PipelineFunction]:
+    """Decorator that annotates a pipeline function with the artifacts it produces.
+
+    Args:
+        **artifacts: Mapping of artifact names to their types.
+            e.g. @produces_artifacts(translation=Path, pronunciation=Path | None)
+
+    Returns:
+        A decorator function that adds the artifact information to the function.
+    """
+
+    def decorator(func: PipelineFunction) -> PipelineFunction:
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            return func(*args, **kwargs)
+
+        wrapper.produced_artifacts = artifacts  # type: ignore
+        return wrapper
+
+    return decorator
+
 
 @dataclass
 class PipelineOptions:
@@ -29,33 +58,6 @@ class PipelineOptions:
     debug: bool = False
     source_language: str = "chinese"
     target_language: str | None = None
-
-
-@dataclass
-class PipelineContext:
-    """Holds the state and artifacts produced by each pipeline stage."""
-
-    # Single "primary" artifact used by each next stage
-    primary: Path
-
-    # These fields store each artifact for later stages like Anki
-    isolated_audio: Path | None = None
-    transcription_srt: Path | None = None
-    translation_srt: Path | None = None
-    pronunciation_srt: Path | None = None
-
-    # Language settings
-    source_language: str = "chinese"
-    target_language: str | None = None
-
-    @classmethod
-    def from_options(cls, input_path: Path, options: PipelineOptions) -> "PipelineContext":
-        """Create a new pipeline context from options."""
-        return cls(
-            primary=input_path,
-            source_language=options.source_language,
-            target_language=options.target_language,
-        )
 
 
 @dataclass
@@ -114,6 +116,65 @@ class PipelineProgress:
             self.progress.update(self.stage_tasks[self.current_stage], completed=completed)
 
 
+@dataclass
+class PipelineContext:
+    """Holds pipeline state and configuration."""
+
+    progress: PipelineProgress
+    source_language: str = "chinese"
+    target_language: str | None = None
+
+    @classmethod
+    def from_options(cls, progress: PipelineProgress, options: PipelineOptions) -> "PipelineContext":
+        """Create a new pipeline context from options."""
+        return cls(
+            progress=progress,
+            source_language=options.source_language,
+            target_language=options.target_language,
+        )
+
+
+def validate_pipeline(pipeline: list[PipelineFunction], initial_artifacts: dict[str, Any]) -> None:
+    """Validate that all required artifacts will be available when the pipeline runs.
+
+    Args:
+        pipeline: List of pipeline functions to validate
+        initial_artifacts: Dictionary of artifacts available at the start
+
+    Raises:
+        ValueError: If any required artifacts are missing
+    """
+    available_artifacts = set(initial_artifacts.keys())
+
+    for func in pipeline:
+        # Get required artifacts from function parameters
+        params = inspect.signature(func).parameters
+        required_artifacts = {
+            name for name, param in params.items() if name != "context" and param.default == param.empty
+        }
+
+        # Check if all required artifacts are available
+        missing = required_artifacts - available_artifacts
+        if missing:
+            logging.error(
+                f"Function {func.__name__} requires artifacts that won't be available: {missing}. "
+                f"Available artifacts will be: {available_artifacts}"
+            )
+            raise ValueError(
+                f"Function {func.__name__} requires artifacts that won't be available: {missing}. "
+                f"Available artifacts will be: {available_artifacts}"
+            )
+
+        # Add this function's produced artifacts to available artifacts
+        if hasattr(func, "produced_artifacts"):
+            produced_artifacts = func.produced_artifacts  # type: ignore
+            for artifact_name, _artifact_type in produced_artifacts.items():
+                # We don't need to check the type, just add the name to available artifacts
+                available_artifacts.add(artifact_name)
+        else:
+            available_artifacts.add(func.__name__)
+
+
 def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -> Path:
     """Run the audio processing pipeline.
 
@@ -128,31 +189,48 @@ def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -
 
     with PipelineProgress.create(console) as progress:
         try:
-            # Initialize context with input file and options
-            context = PipelineContext.from_options(input_file, options)
+            # Initialize context
+            context = PipelineContext.from_options(progress, options)
 
-            # Run each stage in sequence
-            progress.start_stage("Transcoding audio")
-            context = transcode(context, progress)
-            progress.complete_stage()
+            # Define pipeline stages
+            pipeline = [transcode, voice_isolation, transcribe, translate, generate_deck]
+            initial_artifacts = {"input_path": input_file}
 
-            progress.start_stage("Isolating voice with Eleven Labs API")
-            context = voice_isolation(context, progress)
-            progress.complete_stage()
+            # Validate pipeline before running
+            validate_pipeline(pipeline, initial_artifacts)
 
-            progress.start_stage("Transcribing with OpenAI Whisper")
-            context = transcribe(context, progress)
-            progress.complete_stage()
+            # Run pipeline
+            artifacts = initial_artifacts
+            for func in pipeline:
+                # Start progress tracking for this stage
+                progress.start_stage(func.__name__.replace("_", " ").title())
 
-            progress.start_stage("Translating transcript")
-            context = translate(context, progress)
-            progress.complete_stage()
+                # Get required arguments from artifacts
+                params = inspect.signature(func).parameters
+                kwargs = {name: artifacts[name] for name in params if name != "context" and name in artifacts}
 
-            progress.start_stage("Creating Anki deck files")
-            context = generate_deck(context, progress)
-            progress.complete_stage()
+                # Run the function
+                try:
+                    result = func(context=context, **kwargs)
+                    if hasattr(func, "produced_artifacts"):
+                        # If function has multiple artifacts, unpack them into the artifacts dict
+                        if isinstance(result, tuple):
+                            for name, value in zip(func.produced_artifacts.keys(), result, strict=False):  # type: ignore
+                                artifacts[name] = value
+                        else:
+                            # Single artifact with a custom name
+                            artifacts[next(iter(func.produced_artifacts.keys()))] = result  # type: ignore
+                    else:
+                        # Default behavior: use function name as artifact key
+                        artifacts[func.__name__] = result
+                except Exception as e:
+                    logging.error(f"{func.__name__} failed: {str(e)}")
+                    console.print(f"[red]Error in {func.__name__}: {str(e)}[/]")
+                    raise
 
-            return context.primary
+                progress.complete_stage()
+
+            return artifacts["generate_deck"]
 
         except Exception as e:
             logging.error(f"Pipeline failed: {str(e)}")
@@ -160,37 +238,31 @@ def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -
             sys.exit(1)
 
 
-def transcode(context: PipelineContext, progress: PipelineProgress) -> PipelineContext:
+def transcode(context: PipelineContext, input_path: Path) -> Path:
     """Transcode an audio/video file to an audio file suitable for processing."""
     try:
-        output_path = transcode_audio(context.primary, progress_callback=progress.update_progress)
-        context.primary = Path(output_path)
-        return context
+        return transcode_audio(input_path, progress_callback=context.progress.update_progress)
     except Exception as e:
         logging.error(f"Transcoding failed: {e}")
         raise
 
 
-def voice_isolation(context: PipelineContext, progress: PipelineProgress) -> PipelineContext:
+def voice_isolation(context: PipelineContext, transcode: Path) -> Path:
     """Isolate voice from background noise."""
     from .voice_isolation import VoiceIsolationError, isolate_voice
 
     try:
-        output_path = isolate_voice(context.primary, progress_callback=progress.update_progress)
-        context.isolated_audio = output_path
-        context.primary = output_path
-        return context
+        return isolate_voice(transcode, progress_callback=context.progress.update_progress)
     except VoiceIsolationError as e:
-        progress.console.print(f"[red]Voice isolation failed: {e}[/]")
+        context.progress.console.print(f"[red]Voice isolation failed: {e}[/]")
         sys.exit(1)
 
 
-def transcribe(context: PipelineContext, progress: PipelineProgress) -> PipelineContext:
+def transcribe(context: PipelineContext, voice_isolation: Path) -> Path:
     """Transcribe the audio file using OpenAI Whisper and produce an SRT file."""
     from .transcribe import transcribe_audio
 
-    input_path = context.primary
-    output_path = input_path.parent / f"transcribe_{input_path.stem}.srt"
+    output_path = voice_isolation.parent / f"transcribe_{voice_isolation.stem}.srt"
 
     # Map full language names to Whisper codes
     language_codes = {
@@ -206,74 +278,90 @@ def transcribe(context: PipelineContext, progress: PipelineProgress) -> Pipeline
         "russian": "ru",
     }
 
-    # Convert language name to code for Whisper
-    language_code = language_codes.get(context.source_language.lower())
+    language = language_codes.get(context.source_language.lower())
+    if not language:
+        raise ValueError(f"Unsupported language: {context.source_language}")
 
-    task_id = progress.start_stage("Transcribing with OpenAI Whisper")
+    # Get task ID for progress tracking
+    task_id = (
+        context.progress.stage_tasks.get(context.progress.current_stage) if context.progress.current_stage else None
+    )
+
     transcribe_audio(
-        audio_file=input_path,
+        audio_file=voice_isolation,
         transcript_path=output_path,
         model="whisper-1",
-        progress=progress.progress,
         task_id=task_id,
-        language=language_code,
+        progress=context.progress.progress,
+        language=language,
     )
 
-    context.transcription_srt = output_path
-    context.primary = output_path
-    return context
+    return output_path
 
 
-def translate(context: PipelineContext, progress: PipelineProgress) -> PipelineContext:
-    """Translate the SRT file to English and create pinyin if needed."""
+@produces_artifacts(translation=Path, pronunciation=Union[Path, None])  # noqa: UP007
+def translate(context: PipelineContext, transcribe: Path) -> tuple[Path, Path | None]:
+    """Translate the SRT file to English and create pinyin if needed.
+
+    Returns:
+        tuple[Path, Path | None]: (translation_srt_path, pronunciation_srt_path)
+            pronunciation_srt_path may be None for languages that don't need pronunciation
+    """
     from .translate import translate_srt
 
-    input_path = context.primary
-    task_id = progress.start_stage("Translating transcript")
-
-    # Default to English if no target language specified
-    target_language = context.target_language or "english"
-
-    translated_file, pronunciation_file = translate_srt(
-        input_file=input_path,
-        source_language=context.source_language,
-        target_language=target_language,
-        task_id=task_id,
-        progress=progress.progress,
+    # Get task ID for progress tracking
+    task_id = (
+        context.progress.stage_tasks.get(context.progress.current_stage) if context.progress.current_stage else None
     )
+    if task_id is None:
+        raise RuntimeError("No task ID available for translation stage")
 
-    context.translation_srt = Path(translated_file)
-    if pronunciation_file:
-        context.pronunciation_srt = Path(pronunciation_file)
-    context.primary = context.translation_srt
-    return context
-
-
-def generate_deck(context: PipelineContext, progress: PipelineProgress) -> PipelineContext:
-    """Generate an Anki flashcard deck from the processed data."""
-    from .anki import process_deck
-
-    # Create deck directory in current working directory
-    deck_dir = Path.cwd() / "deck"
-    if deck_dir.exists():
-        import shutil
-
-        shutil.rmtree(deck_dir)
-    deck_dir.mkdir(parents=True, exist_ok=True)
-
-    # Create media directory
-    media_dir = deck_dir / "media"
-    media_dir.mkdir(exist_ok=True)
-
-    # Process deck
-    deck_dir = process_deck(
-        context.primary,
-        progress,
-        input_audio_file=context.isolated_audio,
-        transcription_file=context.transcription_srt,
-        pronunciation_file=context.pronunciation_srt,
-        source_language=context.source_language,
+    translation_path, pronunciation_path = translate_srt(
+        input_file=transcribe,
         target_language=context.target_language or "english",
+        task_id=task_id,
+        progress=context.progress.progress,
+        source_language=context.source_language,
     )
-    context.primary = deck_dir
-    return context
+
+    return translation_path, pronunciation_path
+
+
+def generate_deck(
+    context: PipelineContext,
+    voice_isolation: Path,
+    transcribe: Path,
+    translation: Path,
+    pronunciation: Path | None,
+) -> Path:
+    """Generate an Anki flashcard deck from the processed data.
+
+    Args:
+        context: Pipeline context
+        voice_isolation: Path to the voice-isolated audio file
+        transcribe: Path to the transcription file
+        translation: Path to the translation file
+        pronunciation: Path to the pronunciation file (optional)
+
+    Returns:
+        Path: Path to the generated Anki deck directory
+    """
+    from .anki import generate_anki_deck
+
+    task_id = (
+        context.progress.stage_tasks.get(context.progress.current_stage) if context.progress.current_stage else None
+    )
+
+    if task_id is None:
+        raise RuntimeError("No task ID available for deck generation stage")
+
+    return generate_anki_deck(
+        input_data=translation,  # translation file contains the main content
+        input_audio_file=voice_isolation,
+        transcription_file=transcribe,
+        pronunciation_file=pronunciation,
+        source_language=context.source_language,
+        target_language=context.target_language,
+        task_id=task_id,
+        progress=context.progress,
+    )
