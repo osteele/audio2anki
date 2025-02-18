@@ -3,11 +3,10 @@
 import inspect
 import logging
 import sys
-from collections.abc import Callable
-from dataclasses import dataclass, field
-from functools import wraps
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, TypeVar, Union
+from typing import Any, Protocol, TypeVar, cast, runtime_checkable
 
 from rich.console import Console
 from rich.progress import (
@@ -20,31 +19,41 @@ from rich.progress import (
     TimeRemainingColumn,
 )
 
-from .transcoder import transcode_audio
-
 T = TypeVar("T")
 Artifact = Any  # Replace with more specific type as needed
-PipelineFunction = Callable[..., Artifact]
 
 
-def produces_artifacts(**artifacts: Any) -> Callable[[PipelineFunction], PipelineFunction]:
-    """Decorator that annotates a pipeline function with the artifacts it produces.
+@runtime_checkable
+class PipelineFunction(Protocol):
+    """Protocol for pipeline functions."""
 
-    Args:
-        **artifacts: Mapping of artifact names to their types.
-            e.g. @produces_artifacts(translation=Path, pronunciation=Path | None)
+    __name__: str
+    produced_artifacts: dict[str, Any]
 
-    Returns:
-        A decorator function that adds the artifact information to the function.
+    def __call__(self, context: "PipelineContext", **kwargs: Any) -> None: ...
+
+
+def produces_artifacts(**artifacts: Any) -> Callable[[Callable[..., None]], PipelineFunction]:
+    """
+    Decorator that annotates a pipeline function with the artifacts it produces.
+    Example usage:
+        @produces_artifacts(transcribe={"extension": "srt"})
+        def transcribe(...): ...
     """
 
-    def decorator(func: PipelineFunction) -> PipelineFunction:
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            return func(*args, **kwargs)
+    def decorator(func: Callable[..., None]) -> PipelineFunction:
+        # If the user just passes a type (like Path), we can default to "mp3"
+        # If they pass dict with extension, we store that.
+        new_artifacts = {}
+        for name, value in artifacts.items():
+            if isinstance(value, dict) and "extension" in value:
+                new_artifacts[name] = value
+            else:
+                # e.g. user just used "Path"
+                new_artifacts[name] = {"extension": "mp3"}
 
-        wrapper.produced_artifacts = artifacts  # type: ignore
-        return wrapper
+        func.produced_artifacts = new_artifacts  # type: ignore
+        return func  # type: ignore
 
     return decorator
 
@@ -81,7 +90,7 @@ class PipelineProgress:
             TimeRemainingColumn(),
             console=console,
         )
-        pipeline_task = progress.add_task("[bold blue]Creating Anki deck...", total=5)  # 5 stages
+        pipeline_task = progress.add_task("Processing audio...", total=100)
         return cls(progress=progress, pipeline_task=pipeline_task, console=console)
 
     def __enter__(self) -> "PipelineProgress":
@@ -93,22 +102,16 @@ class PipelineProgress:
         """Stop the progress display when exiting the context."""
         self.progress.stop()
 
-    def start_stage(self, description: str) -> TaskID:
+    def start_stage(self, stage_name: str) -> None:
         """Start a new stage with the given description."""
-        if self.current_stage and self.current_stage in self.stage_tasks:
-            self.progress.update(self.stage_tasks[self.current_stage], visible=False)
-
-        task_id = self.progress.add_task(f"[cyan]{description}", total=100, visible=True)
-        self.stage_tasks[description] = task_id
-        self.current_stage = description
-        return task_id
+        self.current_stage = stage_name
+        self.stage_tasks[stage_name] = self.progress.add_task(f"[cyan]{stage_name}...", total=100)
 
     def complete_stage(self) -> None:
         """Mark the current stage as complete and advance the pipeline."""
         if self.current_stage and self.current_stage in self.stage_tasks:
             self.progress.update(self.stage_tasks[self.current_stage], completed=100)
-            self.progress.advance(self.pipeline_task)
-            self.current_stage = None
+            self.progress.update(self.pipeline_task, advance=20)
 
     def update_progress(self, completed: float) -> None:
         """Update the current stage's progress."""
@@ -120,21 +123,73 @@ class PipelineProgress:
 class PipelineContext:
     """Holds pipeline state and configuration."""
 
-    progress: PipelineProgress
+    progress: "PipelineProgress"
     source_language: str = "chinese"
     target_language: str | None = None
+    _current_stage: str | None = None
+    _current_stage_fn: PipelineFunction | None = None
+    _stage_artifacts: dict[str, set[str]] = field(default_factory=dict)
 
-    @classmethod
-    def from_options(cls, progress: PipelineProgress, options: PipelineOptions) -> "PipelineContext":
-        """Create a new pipeline context from options."""
-        return cls(
-            progress=progress,
-            source_language=options.source_language,
-            target_language=options.target_language,
-        )
+    def for_stage(self, pipeline_fn: PipelineFunction) -> "PipelineContext":
+        """Create a stage-specific context."""
+        stage_name = pipeline_fn.__name__
+        # Store artifact keys if function is decorated
+        produced_artifacts = getattr(pipeline_fn, "produced_artifacts", None)
+        if produced_artifacts is not None:
+            self._stage_artifacts[stage_name] = set(produced_artifacts.keys())
+        else:
+            # Function produces single artifact keyed by function name
+            self._stage_artifacts[stage_name] = {stage_name}
+
+        # Start progress tracking for this stage
+        self.progress.start_stage(stage_name)
+
+        # Create new context with stage name and function set
+        return replace(self, _current_stage=stage_name, _current_stage_fn=pipeline_fn)
+
+    def get_artifact_path(self, artifact_name: str | None = None) -> Path:
+        """Get path for an artifact within the current stage.
+
+        Args:
+            artifact_name: Name of the artifact. If None, uses the stage name.
+        """
+        if not self._current_stage or not self._current_stage_fn:
+            raise ValueError("No current pipeline stage")
+
+        valid_artifacts = self._stage_artifacts.get(self._current_stage, set(self._current_stage))
+
+        # If no artifact_name provided, use stage name (for single-artifact stages)
+        if not artifact_name:
+            if len(valid_artifacts) != 1:
+                msg = f"Expected exactly one artifact for stage '{self._current_stage}'"
+                msg += f", but got {len(valid_artifacts)}"
+                raise ValueError(msg)
+            artifact_name = next(iter(valid_artifacts))
+
+        # Validate artifact belongs to current stage
+        if artifact_name not in valid_artifacts:
+            raise ValueError(f"Invalid artifact '{artifact_name}' for stage '{self._current_stage}'")
+
+        # Get extension from the function's produced_artifacts
+        extension = "mp3"  # default
+        produced_artifacts = getattr(self._current_stage_fn, "produced_artifacts", None)
+        if produced_artifacts and artifact_name in produced_artifacts:
+            extension = produced_artifacts[artifact_name].get("extension", "mp3")
+
+        # Use cache to get the path
+        from . import cache
+
+        return Path(cache.get_cache_path(artifact_name, "temp", f".{extension}"))
+
+    @property
+    def stage_task_id(self) -> TaskID | None:
+        """Get the task ID for the current stage."""
+        if not self._current_stage:
+            return None
+        return self.progress.stage_tasks.get(self._current_stage)
 
 
-def validate_pipeline(pipeline: list[PipelineFunction], initial_artifacts: dict[str, Any]) -> None:
+def validate_pipeline(pipeline: Sequence[PipelineFunction], initial_artifacts: dict[str, Any]) -> None:
     """Validate that all required artifacts will be available when the pipeline runs.
 
     Args:
@@ -190,7 +245,11 @@ def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -
     with PipelineProgress.create(console) as progress:
         try:
             # Initialize context
-            context = PipelineContext.from_options(progress, options)
+            context = PipelineContext(
+                progress=progress,
+                source_language=options.source_language,
+                target_language=options.target_language,
+            )
 
             # Define pipeline stages
             pipeline = [transcode, voice_isolation, transcribe, translate, generate_deck]
@@ -202,8 +261,8 @@ def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -
             # Run pipeline
             artifacts = initial_artifacts
             for func in pipeline:
-                # Start progress tracking for this stage
-                progress.start_stage(func.__name__.replace("_", " ").title())
+                # Create stage-specific context
+                context = context.for_stage(func)
 
                 # Get required arguments from artifacts
                 params = inspect.signature(func).parameters
@@ -211,26 +270,20 @@ def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -
 
                 # Run the function
                 try:
-                    result = func(context=context, **kwargs)
-                    if hasattr(func, "produced_artifacts"):
-                        # If function has multiple artifacts, unpack them into the artifacts dict
-                        if isinstance(result, tuple):
-                            for name, value in zip(func.produced_artifacts.keys(), result, strict=False):  # type: ignore
-                                artifacts[name] = value
-                        else:
-                            # Single artifact with a custom name
-                            artifacts[next(iter(func.produced_artifacts.keys()))] = result  # type: ignore
-                    else:
-                        # Default behavior: use function name as artifact key
-                        artifacts[func.__name__] = result
+                    func(context=context, **kwargs)
                 except Exception as e:
                     logging.error(f"{func.__name__} failed: {str(e)}")
                     console.print(f"[red]Error in {func.__name__}: {str(e)}[/]")
                     raise
 
+                # Update artifacts with produced artifacts from this stage
+                if hasattr(func, "produced_artifacts"):
+                    for artifact_name in func.produced_artifacts:
+                        artifacts[artifact_name] = context.get_artifact_path(artifact_name)
+
                 progress.complete_stage()
 
-            return artifacts["generate_deck"]
+            return context.get_artifact_path()
 
         except Exception as e:
             logging.error(f"Pipeline failed: {str(e)}")
@@ -238,31 +291,36 @@ def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -
             sys.exit(1)
 
 
-def transcode(context: PipelineContext, input_path: Path) -> Path:
+@produces_artifacts(transcode={"extension": "mp3"})
+def transcode(context: PipelineContext, input_path: Path) -> None:
     """Transcode an audio/video file to an audio file suitable for processing."""
+    from .transcoder import transcode_audio
+
     try:
-        return transcode_audio(input_path, progress_callback=context.progress.update_progress)
+        output_path = context.get_artifact_path()
+        transcode_audio(input_path, output_path, progress_callback=context.progress.update_progress)
     except Exception as e:
         logging.error(f"Transcoding failed: {e}")
         raise
 
 
-def voice_isolation(context: PipelineContext, transcode: Path) -> Path:
+@produces_artifacts(voice_isolation={"extension": "mp3"})
+def voice_isolation(context: PipelineContext, transcode: Path) -> None:
     """Isolate voice from background noise."""
     from .voice_isolation import VoiceIsolationError, isolate_voice
 
     try:
-        return isolate_voice(transcode, progress_callback=context.progress.update_progress)
+        output_path = context.get_artifact_path()
+        isolate_voice(transcode, output_path, progress_callback=context.progress.update_progress)
     except VoiceIsolationError as e:
         context.progress.console.print(f"[red]Voice isolation failed: {e}[/]")
         sys.exit(1)
 
 
-def transcribe(context: PipelineContext, voice_isolation: Path) -> Path:
+@produces_artifacts(transcribe={"extension": "srt"})
+def transcribe(context: PipelineContext, voice_isolation: Path) -> None:
     """Transcribe the audio file using OpenAI Whisper and produce an SRT file."""
     from .transcribe import transcribe_audio
-
-    output_path = voice_isolation.parent / f"transcribe_{voice_isolation.stem}.srt"
 
     # Map full language names to Whisper codes
     language_codes = {
@@ -282,49 +340,33 @@ def transcribe(context: PipelineContext, voice_isolation: Path) -> Path:
     if not language:
         raise ValueError(f"Unsupported language: {context.source_language}")
 
-    # Get task ID for progress tracking
-    task_id = (
-        context.progress.stage_tasks.get(context.progress.current_stage) if context.progress.current_stage else None
-    )
-
     transcribe_audio(
         audio_file=voice_isolation,
-        transcript_path=output_path,
+        transcript_path=context.get_artifact_path(),
         model="whisper-1",
-        task_id=task_id,
+        task_id=context.stage_task_id,
         progress=context.progress.progress,
         language=language,
     )
 
-    return output_path
 
-
-@produces_artifacts(translation=Path, pronunciation=Union[Path, None])  # noqa: UP007
-def translate(context: PipelineContext, transcribe: Path) -> tuple[Path, Path | None]:
-    """Translate the SRT file to English and create pinyin if needed.
-
-    Returns:
-        tuple[Path, Path | None]: (translation_srt_path, pronunciation_srt_path)
-            pronunciation_srt_path may be None for languages that don't need pronunciation
-    """
+@produces_artifacts(translation={"extension": "srt"}, pronunciation={"extension": "srt"})
+def translate(context: PipelineContext, transcribe: Path) -> None:
+    """Translate the SRT file to English and create pinyin if needed."""
     from .translate import translate_srt
 
-    # Get task ID for progress tracking
-    task_id = (
-        context.progress.stage_tasks.get(context.progress.current_stage) if context.progress.current_stage else None
-    )
-    if task_id is None:
-        raise RuntimeError("No task ID available for translation stage")
+    translation_path = context.get_artifact_path("translation")
+    pronunciation_path = context.get_artifact_path("pronunciation")
 
-    translation_path, pronunciation_path = translate_srt(
+    translate_srt(
         input_file=transcribe,
         target_language=context.target_language or "english",
-        task_id=task_id,
+        task_id=cast(TaskID, context.stage_task_id),
         progress=context.progress.progress,
         source_language=context.source_language,
+        translation_output=translation_path,
+        pronunciation_output=pronunciation_path,
     )
-
-    return translation_path, pronunciation_path
 
 
 def generate_deck(
@@ -333,35 +375,18 @@ def generate_deck(
     transcribe: Path,
     translation: Path,
     pronunciation: Path | None,
-) -> Path:
-    """Generate an Anki flashcard deck from the processed data.
-
-    Args:
-        context: Pipeline context
-        voice_isolation: Path to the voice-isolated audio file
-        transcribe: Path to the transcription file
-        translation: Path to the translation file
-        pronunciation: Path to the pronunciation file (optional)
-
-    Returns:
-        Path: Path to the generated Anki deck directory
-    """
+) -> None:
+    """Generate an Anki flashcard deck from the processed data."""
     from .anki import generate_anki_deck
 
-    task_id = (
-        context.progress.stage_tasks.get(context.progress.current_stage) if context.progress.current_stage else None
-    )
-
-    if task_id is None:
-        raise RuntimeError("No task ID available for deck generation stage")
-
-    return generate_anki_deck(
+    generate_anki_deck(
         input_data=translation,  # translation file contains the main content
         input_audio_file=voice_isolation,
         transcription_file=transcribe,
         pronunciation_file=pronunciation,
         source_language=context.source_language,
         target_language=context.target_language,
-        task_id=task_id,
+        task_id=context.stage_task_id,
         progress=context.progress,
+        output_path="deck",
     )

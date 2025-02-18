@@ -22,39 +22,17 @@ class VoiceIsolationError(Exception):
 
 
 def _call_elevenlabs_api(input_path: Path, progress_callback: Callable[[float], None] | None = None) -> Path:
-    """
-    Call Eleven Labs API to isolate voice from background noise.
-
-    Args:
-        input_path: Path to input audio file
-        progress_callback: Optional callback function to report progress
-
-    Returns:
-        Path to the raw isolated voice audio file from the API
-
-    Raises:
-        VoiceIsolationError: If API call fails
-    """
+    """Call Eleven Labs API to isolate voice from background noise."""
 
     def update_progress(percent: float) -> None:
         if progress_callback:
-            progress_callback(percent * 0.7)  # Scale to 70% of total progress
+            progress_callback(percent * 0.7)
 
     api_key = os.getenv("ELEVENLABS_API_KEY")
     if not api_key:
         raise VoiceIsolationError(
             "ELEVENLABS_API_KEY environment variable not set. Get your API key from https://elevenlabs.io"
         )
-
-    # Check API cache
-    file_hash = cache.compute_file_hash(input_path)
-    cache_params = {"input_hash": file_hash}
-
-    if cache.cache_retrieve("voice_isolation_raw", input_path, ".mp3", extra_params=cache_params):
-        cached_path = cache.get_cache_path("voice_isolation_raw", file_hash, ".mp3")
-        logger.debug(f"Using cached raw isolated voice file: {cached_path}")
-        update_progress(70)
-        return Path(cached_path)
 
     try:
         url = f"{API_BASE_URL}/audio-isolation/stream"
@@ -76,7 +54,7 @@ def _call_elevenlabs_api(input_path: Path, progress_callback: Callable[[float], 
                                 error_msg = error_data.get("detail", "API error message")
                             except Exception:
                                 error_msg = f"API request failed: {response.status_code}"
-                            raise VoiceIsolationError(error_msg) from None
+                            raise VoiceIsolationError(error_msg)
 
                         logger.debug("Streaming isolated audio from API")
                         update_progress(30)
@@ -94,17 +72,10 @@ def _call_elevenlabs_api(input_path: Path, progress_callback: Callable[[float], 
                         os.fsync(temp_file.fileno())
 
             if total_chunks == 0:
-                raise VoiceIsolationError("No audio data received from API") from None
+                raise VoiceIsolationError("No audio data received from API")
 
-            # Store raw API response in cache
-            with open(temp_path, "rb") as f:
-                cached_path = cache.cache_store(
-                    "voice_isolation_raw", input_path, f.read(), ".mp3", extra_params=cache_params
-                )
-
-            os.unlink(temp_path)
             update_progress(70)
-            return Path(cached_path)
+            return temp_path
 
     except httpx.TimeoutException as err:
         raise VoiceIsolationError("API request timed out") from err
@@ -190,28 +161,21 @@ def _match_audio_properties(
 
 
 def isolate_voice(
-    input_path: str | Path,
+    input_path: Path,
+    output_path: Path,
     progress_callback: Callable[[float], None] | None = None,
-) -> Path:
-    """
-    Isolate voice from background noise using Eleven Labs API and match original audio properties.
+) -> None:
+    """Isolate voice from background noise using Eleven Labs API."""
+    try:
+        # Get isolated voice from API into a temporary file
+        temp_isolated_path = _call_elevenlabs_api(input_path, progress_callback)
 
-    Args:
-        input_path: Path to input audio file
-        progress_callback: Optional callback function to report progress
-
-    Returns:
-        Path to the processed audio file
-
-    Raises:
-        VoiceIsolationError: If voice isolation fails
-    """
-    input_path = Path(input_path)
-    if not input_path.exists():
-        raise FileNotFoundError(f"Input file not found: {input_path}")
-
-    # First get the isolated voice from API
-    isolated_path = _call_elevenlabs_api(input_path, progress_callback)
-
-    # Then match the audio properties
-    return _match_audio_properties(input_path, isolated_path, progress_callback)
+        try:
+            # Match audio properties and save to output path
+            _match_audio_properties(input_path, temp_isolated_path, progress_callback)
+        finally:
+            # Clean up temporary file
+            if temp_isolated_path.exists():
+                temp_isolated_path.unlink()
+    except Exception as e:
+        raise VoiceIsolationError(f"Voice isolation failed: {e}") from e

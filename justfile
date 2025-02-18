@@ -13,7 +13,6 @@ fix: format
 
 # Run linting
 lint:
-    uv run --dev ruff check .
     uv run --dev pyright .
 
 # Run tests

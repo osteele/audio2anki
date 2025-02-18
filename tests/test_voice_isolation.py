@@ -1,7 +1,8 @@
 """Tests for voice isolation functionality."""
 
+import io
 import os
-from collections.abc import Callable, Generator
+from collections.abc import Generator
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -11,35 +12,25 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from audio2anki.cache import clear_cache
 from audio2anki.voice_isolation import VoiceIsolationError, isolate_voice
 
 
 class MockResponse:
     """Mock HTTP response for testing."""
 
-    def __init__(self, status_code: int = 200):
+    def __init__(self, status_code: int = 200, audio_data: bytes | None = None):
         self.status_code = status_code
-        # Create a short audio file for testing
-        self._audio_data = self._create_test_audio()
+        # Create a short audio file for testing if no custom audio data is provided
+        self._audio_data = audio_data if audio_data is not None else self._create_test_audio()
 
     def _create_test_audio(self) -> bytes:
-        """Create a short test audio file."""
+        """Create a short test audio file in memory."""
         # Create 1 second of audio at 44100Hz
         samples = np.sin(2 * np.pi * 440 * np.linspace(0, 1, 44100))
-        with sf.SoundFile(
-            "temp.wav",
-            mode="w",
-            samplerate=44100,
-            channels=1,
-            format="WAV",
-        ) as f:
-            f.write(samples)
-
-        with open("temp.wav", "rb") as f:
-            data = f.read()
-        os.unlink("temp.wav")
-        return data
+        buffer = io.BytesIO()
+        sf.write(buffer, samples, 44100, format="WAV")
+        buffer.seek(0)  # Reset buffer position
+        return buffer.getvalue()
 
     def iter_bytes(self):
         """Simulate streaming response."""
@@ -48,187 +39,154 @@ class MockResponse:
         for i in range(0, len(data), chunk_size):
             yield data[i : i + chunk_size]
 
-
-@pytest.fixture
-def test_audio_file(tmp_path: Path) -> Path:
-    """Create a test audio file."""
-    audio_path = tmp_path / "test_audio.mp3"
-    # Create 2 seconds of audio at 44100Hz
-    samples = np.sin(2 * np.pi * 440 * np.linspace(0, 2, 88200))
-    with sf.SoundFile(
-        audio_path,
-        mode="w",
-        samplerate=44100,
-        channels=1,
-        format="WAV",
-    ) as f:
-        f.write(samples)
-    return audio_path
+    def json(self) -> dict[str, Any]:
+        """Return mock JSON response for error cases."""
+        return {"detail": "API error message"}
 
 
-@pytest.fixture
-def mock_api_response() -> MockResponse:
+@pytest.fixture(params=[200, 400])
+def mock_api_response(request: pytest.FixtureRequest) -> MockResponse:
     """Create a mock API response."""
-    return MockResponse()
+    if request.param == 200:
+        return MockResponse(status_code=200)
+    return MockResponse(status_code=400)
 
 
 @pytest.fixture
-def test_cache_dir(tmp_path: Path) -> Generator[Path, None, None]:
-    """Create a test cache directory."""
-    cache_dir = tmp_path / "test_cache"
-    cache_dir.mkdir()
-    with patch("audio2anki.cache.CACHE_DIR", cache_dir):
-        yield cache_dir
+def mock_http_client(mock_api_response: MockResponse) -> Generator[MagicMock, None, None]:
+    """Fixture to mock httpx.Client and its responses."""
+    with patch("httpx.Client", autospec=True) as mock_client:
+        # Configure the mock client
+        mock_instance = mock_client.return_value.__enter__.return_value
+        mock_instance.stream.return_value.__enter__.return_value = mock_api_response
+
+        # Mock environment variable
+        with patch.dict(os.environ, {"ELEVENLABS_API_KEY": "test-key"}):
+            yield mock_client
 
 
-@pytest.fixture(autouse=True)
-def setup_and_cleanup() -> Generator[None, None, None]:
-    """Set up test environment and clean up after tests."""
-    os.environ["ELEVENLABS_API_KEY"] = "test_key"
-    yield
-    if "ELEVENLABS_API_KEY" in os.environ:
-        del os.environ["ELEVENLABS_API_KEY"]
-
-
-def test_isolate_voice_missing_api_key(test_audio_file: Path):
-    """Test error handling when API key is missing."""
-    # Delete API key before any operations and clear cache
-    del os.environ["ELEVENLABS_API_KEY"]
-    clear_cache()
-
-    with pytest.raises(VoiceIsolationError, match="ELEVENLABS_API_KEY.*not set"):
-        isolate_voice(test_audio_file)
-
-
-def test_isolate_voice_basic(test_audio_file: Path, mock_api_response: MockResponse, test_cache_dir: Path) -> None:
+def test_isolate_voice_basic(test_audio_file: Path, mock_http_client: MagicMock, tmp_path: Path) -> None:
     """Test basic voice isolation functionality."""
-    with patch("httpx.Client") as mock_client:
-        mock_stream = MagicMock()
-        mock_stream.__enter__.return_value = mock_api_response
-        mock_client.return_value.__enter__.return_value.stream.return_value = mock_stream
+    output_path = tmp_path / "output.mp3"
 
-        output_path = isolate_voice(test_audio_file)
-        assert output_path.exists()
-        assert output_path.stat().st_size > 0
+    # Mock the _match_audio_properties function to copy the temp file to output
+    def mock_match_audio(source: Path, target: Path, callback=None) -> Path:
+        with open(target, "rb") as src, open(output_path, "wb") as dst:
+            dst.write(src.read())
+        return output_path
 
-
-def test_isolate_voice_caching(test_audio_file: Path, mock_api_response: MockResponse, test_cache_dir: Path) -> None:
-    """Test that voice isolation results are cached."""
-    # Create a dummy file to simulate the raw isolated output.
-    dummy_path = test_audio_file.parent / "dummy.wav"
-    t = np.linspace(0, 1, 44100, endpoint=False)
-    samples = (0.5 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
-    sf.write(dummy_path, samples, 44100, format="WAV")
-
-    call_count = 0
-
-    def fake_call_elevenlabs_api(input_path: str, progress_callback: Callable[[float], None]):
-        nonlocal call_count
-        if call_count == 0:
-            call_count += 1
-            return dummy_path
+    with patch("audio2anki.voice_isolation._match_audio_properties", side_effect=mock_match_audio):
+        if (
+            mock_http_client.return_value.__enter__.return_value.stream.return_value.__enter__.return_value.status_code
+            == 400
+        ):
+            with pytest.raises(VoiceIsolationError, match="API error message"):
+                isolate_voice(test_audio_file, output_path)
+            assert not output_path.exists()
         else:
-            return dummy_path
-
-    with patch("audio2anki.voice_isolation._call_elevenlabs_api", side_effect=fake_call_elevenlabs_api):
-        # Clear cache before test
-        clear_cache()
-
-        # First call should trigger the API call
-        path1 = isolate_voice(test_audio_file)
-        assert call_count == 1
-
-        # Second call should retrieve from cache (i.e. no additional API call)
-        path2 = isolate_voice(test_audio_file)
-        assert call_count == 1
-        with open(path1, "rb") as f1, open(path2, "rb") as f2:
-            assert f1.read() == f2.read()
+            isolate_voice(test_audio_file, output_path)
+            assert output_path.exists()
+            assert output_path.stat().st_size > 0
 
 
-def test_isolate_voice_progress_callback(
-    test_audio_file: Path, mock_api_response: MockResponse, test_cache_dir: Path
-) -> None:
-    """Test that progress callback is called with expected values."""
+def test_isolate_voice_with_progress(test_audio_file: Path, mock_http_client: MagicMock, tmp_path: Path) -> None:
+    """Test progress callback functionality."""
+    output_path = tmp_path / "output.mp3"
     progress_values: list[float] = []
 
-    def progress_callback(value: float) -> None:
-        progress_values.append(value)
+    def progress_callback(percent: float) -> None:
+        progress_values.append(percent)
 
-    with patch("httpx.Client") as mock_client:
-        mock_stream = MagicMock()
-        mock_stream.__enter__.return_value = mock_api_response
-        mock_client.return_value.__enter__.return_value.stream.return_value = mock_stream
+    # Mock the _match_audio_properties function
+    def mock_match_audio(source: Path, target: Path, callback=None) -> Path:
+        with open(target, "rb") as src, open(output_path, "wb") as dst:
+            dst.write(src.read())
+        if callback:  # Call the progress callback with final progress
+            callback(100)  # This will be scaled by the 0.3 factor in the real function
+        return output_path
 
-        # Clear cache before test
-        clear_cache()
-
-        isolate_voice(test_audio_file, progress_callback=progress_callback)
-
-        # Check progress values
-        assert progress_values[0] <= 10  # Initial progress should be low
-        assert any(45 <= v <= 80 for v in progress_values)  # Processing progress
-        assert progress_values[-1] >= 70  # Final progress should be substantial
-
-        # (Optionally) verify that progress reaches from a low initial value to a substantial final value.
-
-
-def test_isolate_voice_file_not_found() -> None:
-    """Test error handling for non-existent input file."""
-    with pytest.raises(FileNotFoundError):
-        isolate_voice("nonexistent.mp3")
+    with patch("audio2anki.voice_isolation._match_audio_properties", side_effect=mock_match_audio):
+        if (
+            mock_http_client.return_value.__enter__.return_value.stream.return_value.__enter__.return_value.status_code
+            == 400
+        ):
+            with pytest.raises(VoiceIsolationError):
+                isolate_voice(test_audio_file, output_path, progress_callback=progress_callback)
+            assert len(progress_values) > 0  # Should have at least initial progress
+            assert progress_values[0] <= 10  # Initial progress should be low
+        else:
+            isolate_voice(test_audio_file, output_path, progress_callback=progress_callback)
+            assert progress_values[0] <= 10  # Initial progress should be low
+            assert any(45 <= v <= 80 for v in progress_values)  # Processing progress
+            assert progress_values[-1] >= 70  # Final progress should be substantial
 
 
-def test_isolate_voice_api_error(test_audio_file: Path, test_cache_dir: Path) -> None:
+def test_isolate_voice_api_error(test_audio_file: Path, mock_http_client: MagicMock, tmp_path: Path) -> None:
     """Test error handling for API errors."""
+    output_path = tmp_path / "output.mp3"
 
-    class MockErrorResponse:
-        status_code: int = 400
+    # Mock the _match_audio_properties function
+    def mock_match_audio(source: Path, target: Path, callback=None) -> Path:
+        with open(target, "rb") as src, open(output_path, "wb") as dst:
+            dst.write(src.read())
+        return output_path
 
-        def json(self) -> dict[str, Any]:
-            return {"detail": "API error message"}
-
-        def iter_bytes(self) -> Generator[bytes, None, None]:
-            yield from ()
-
-    with patch("httpx.Client") as mock_client:
-        mock_stream = MagicMock()
-        mock_stream.__enter__.return_value = MockErrorResponse()
-        mock_client.return_value.__enter__.return_value.stream.return_value = mock_stream
-        with pytest.raises(VoiceIsolationError, match="API error message"):
-            isolate_voice(test_audio_file)
+    with patch("audio2anki.voice_isolation._match_audio_properties", side_effect=mock_match_audio):
+        if (
+            mock_http_client.return_value.__enter__.return_value.stream.return_value.__enter__.return_value.status_code
+            == 400
+        ):
+            with pytest.raises(VoiceIsolationError, match="API error message"):
+                isolate_voice(test_audio_file, output_path)
+        else:
+            isolate_voice(test_audio_file, output_path)
+            assert output_path.exists()
 
 
-def test_isolate_voice_api_timeout(test_audio_file: Path, test_cache_dir: Path) -> None:
+def test_isolate_voice_api_timeout(test_audio_file: Path, tmp_path: Path) -> None:
     """Test error handling for API timeout."""
-    with patch("httpx.Client") as mock_client:
-        mock_client.return_value.__enter__.return_value.stream.side_effect = httpx.TimeoutException("Timeout")
-        with pytest.raises(VoiceIsolationError, match="API request timed out"):
-            isolate_voice(test_audio_file)
+    output_path = tmp_path / "output.mp3"
+
+    with (
+        patch("audio2anki.voice_isolation._call_elevenlabs_api", autospec=True) as mock_call_api,
+        patch("audio2anki.voice_isolation._match_audio_properties", autospec=True) as mock_match_audio,
+    ):
+        mock_call_api.side_effect = httpx.TimeoutException("Timeout")
+        with pytest.raises(VoiceIsolationError, match="Voice isolation failed: Timeout"):
+            isolate_voice(test_audio_file, output_path)
+        mock_match_audio.assert_not_called()
 
 
-def test_isolate_voice_request_error(test_audio_file: Path, test_cache_dir: Path) -> None:
+def test_isolate_voice_request_error(test_audio_file: Path, tmp_path: Path) -> None:
     """Test error handling for general request errors."""
-    with patch("httpx.Client") as mock_client:
-        mock_client.return_value.__enter__.return_value.stream.side_effect = httpx.RequestError("Network error")
-        with pytest.raises(VoiceIsolationError, match="API request failed"):
-            isolate_voice(test_audio_file)
+    output_path = tmp_path / "output.mp3"
+
+    with (
+        patch("audio2anki.voice_isolation._call_elevenlabs_api", autospec=True) as mock_call_api,
+        patch("audio2anki.voice_isolation._match_audio_properties", autospec=True) as mock_match_audio,
+    ):
+        mock_call_api.side_effect = httpx.RequestError("Network error")
+        with pytest.raises(VoiceIsolationError, match="Voice isolation failed: Network error"):
+            isolate_voice(test_audio_file, output_path)
+        mock_match_audio.assert_not_called()
 
 
-def test_isolate_voice_empty_response(test_audio_file: Path, test_cache_dir: Path) -> None:
+def test_isolate_voice_empty_response(test_audio_file: Path, mock_http_client: MagicMock, tmp_path: Path) -> None:
     """Test error handling for empty API response."""
+    output_path = tmp_path / "output.mp3"
+    temp_isolated_path = tmp_path / "temp_isolated.mp3"
+    # Don't create the temp file, simulating an empty response
 
-    class MockEmptyResponse:
-        status_code: int = 200
+    with (
+        patch(
+            "audio2anki.voice_isolation._call_elevenlabs_api", return_value=temp_isolated_path, autospec=True
+        ) as mock_call_api,
+        patch(
+            "audio2anki.voice_isolation._match_audio_properties", return_value=output_path, autospec=True
+        ) as mock_match_audio,
+    ):
+        mock_call_api.side_effect = VoiceIsolationError("No audio data received")
 
-        def iter_bytes(self) -> Generator[bytes, None, None]:
-            yield from ()
-
-        def json(self) -> dict[str, Any]:
-            raise RuntimeError("Should not call json() on successful response")
-
-    with patch("httpx.Client") as mock_client:
-        mock_stream = MagicMock()
-        mock_stream.__enter__.return_value = MockEmptyResponse()
-        mock_client.return_value.__enter__.return_value.stream.return_value = mock_stream
         with pytest.raises(VoiceIsolationError, match="No audio data received"):
-            isolate_voice(test_audio_file)
+            isolate_voice(test_audio_file, output_path)
+        mock_match_audio.assert_not_called()

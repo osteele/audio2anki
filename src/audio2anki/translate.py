@@ -1,7 +1,6 @@
 """Translation module using OpenAI or DeepL API."""
 
 import os
-import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -10,7 +9,6 @@ import deepl
 from openai import OpenAI
 from rich.progress import Progress, TaskID
 
-from . import cache
 from .transcribe import TranscriptionSegment, load_transcript, save_transcript
 
 
@@ -220,11 +218,13 @@ def translate_single_segment(
 
 def translate_srt(
     input_file: Path,
+    translation_output: Path,
+    pronunciation_output: Path,
     target_language: str,
     task_id: TaskID,
     progress: Progress,
     source_language: str | None = None,
-) -> tuple[Path, Path | None]:
+) -> None:
     """Translate SRT file to target language.
 
     Args:
@@ -243,30 +243,6 @@ def translate_srt(
 
     if not openai_key:
         raise ValueError("OPENAI_API_KEY environment variable is required for translation and readings")
-
-    # Prepare output files with standardized naming
-    translated_file = input_file.parent / f"translation_{input_file.stem}.srt"
-    reading_file = input_file.parent / f"pronunciation_{input_file.stem}.srt" if source_language else None
-
-    # Check cache for translation
-    cache_params = {
-        "target_language": target_language,
-        "source_language": source_language,
-        "use_deepl": bool(deepl_token),
-    }
-
-    # Try to retrieve translation from cache
-    if cache.cache_retrieve("translate", input_file, ".srt", cache_params):
-        translated_path = Path(cache.get_cache_path("translate", cache.compute_file_hash(input_file), ".srt"))
-        # Copy from cache to output location
-        shutil.copy2(translated_path, translated_file)
-        progress.update(task_id, completed=100)
-        return translated_file, reading_file
-
-    # Try to retrieve reading from cache if applicable
-    if reading_file and cache.cache_retrieve("reading", input_file, ".srt", {"source_language": source_language}):
-        reading_path = Path(cache.get_cache_path("reading", cache.compute_file_hash(input_file), ".srt"))
-        shutil.copy2(reading_path, reading_file)
 
     # Initialize OpenAI client for translation and readings
     openai_client = OpenAI(api_key=openai_key)
@@ -327,32 +303,13 @@ def translate_srt(
             progress.update(task_id, advance=1)
 
     # Save translated SRT file
-    save_transcript(translated_segments, translated_file)
+    save_transcript(translated_segments, translation_output)
 
     # Save reading SRT file if applicable
-    if reading_file and reading_segments:
-        save_transcript(reading_segments, reading_file)
-
-    # Cache the results if successful
-    if total_success > 0:
-        # Cache translation
-        with open(translated_file, "rb") as f:
-            cache.cache_store("translate", input_file, f.read(), ".srt", extra_params=cache_params)
-
-        # Cache reading if applicable
-        if reading_file and reading_segments:
-            with open(reading_file, "rb") as f:
-                cache.cache_store(
-                    "reading",
-                    input_file,
-                    f.read(),
-                    ".srt",
-                    extra_params={"source_language": source_language},
-                )
+    if reading_segments:
+        save_transcript(reading_segments, pronunciation_output)
 
     progress.update(task_id, description=f"Translation complete ({total_success}/{total_segments} successful)")
-
-    return translated_file, reading_file
 
 
 # Translate a list of segments (used by tests)

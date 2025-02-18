@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TypedDict
 
 import pytest
+from pydub import AudioSegment
 from rich.progress import Progress
 
 from audio2anki import cache
@@ -69,3 +70,12 @@ def test_env(tmp_path: Path) -> Generator[CacheTestEnv, None, None]:
             os.environ.pop(key, None)
         else:
             os.environ[key] = value
+
+
+@pytest.fixture
+def test_audio_file(tmp_path: Path) -> Path:
+    """Create a valid test audio file."""
+    audio = AudioSegment.silent(duration=1000)  # 1 second of silence
+    file_path = tmp_path / "test.mp3"
+    audio.export(str(file_path), format="mp3")
+    return file_path
