@@ -2,7 +2,6 @@
 
 import inspect
 import logging
-import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -19,8 +18,9 @@ from rich.progress import (
     TimeRemainingColumn,
 )
 
+from .utils import sanitize_filename
+
 T = TypeVar("T")
-Artifact = Any  # Replace with more specific type as needed
 
 
 @runtime_checkable
@@ -28,31 +28,22 @@ class PipelineFunction(Protocol):
     """Protocol for pipeline functions."""
 
     __name__: str
-    produced_artifacts: dict[str, Any]
+    produced_artifacts: dict[str, dict[str, Any]]
 
     def __call__(self, context: "PipelineContext", **kwargs: Any) -> None: ...
 
 
-def produces_artifacts(**artifacts: Any) -> Callable[[Callable[..., None]], PipelineFunction]:
+def pipeline_function(**artifacts: dict[str, Any]) -> Callable[[Callable[..., None]], PipelineFunction]:
     """
     Decorator that annotates a pipeline function with the artifacts it produces.
     Example usage:
-        @produces_artifacts(transcribe={"extension": "srt"})
+        @pipeline_function(transcript={"extension": "srt"})
         def transcribe(...): ...
     """
 
     def decorator(func: Callable[..., None]) -> PipelineFunction:
-        # If the user just passes a type (like Path), we can default to "mp3"
-        # If they pass dict with extension, we store that.
-        new_artifacts = {}
-        for name, value in artifacts.items():
-            if isinstance(value, dict) and "extension" in value:
-                new_artifacts[name] = value
-            else:
-                # e.g. user just used "Path"
-                new_artifacts[name] = {"extension": "mp3"}
-
-        func.produced_artifacts = new_artifacts  # type: ignore
+        # Store the artifact definitions
+        func.produced_artifacts = artifacts  # type: ignore
         return func  # type: ignore
 
     return decorator
@@ -76,8 +67,8 @@ class PipelineProgress:
     progress: Progress
     pipeline_task: TaskID
     console: Console
-    stage_tasks: dict[str, TaskID] = field(default_factory=dict)
     current_stage: str | None = None
+    stage_tasks: dict[str, TaskID] = field(default_factory=dict)
 
     @classmethod
     def create(cls, console: Console) -> "PipelineProgress":
@@ -103,102 +94,252 @@ class PipelineProgress:
         self.progress.stop()
 
     def start_stage(self, stage_name: str) -> None:
-        """Start a new stage with the given description."""
+        """Start tracking progress for a new stage."""
         self.current_stage = stage_name
-        self.stage_tasks[stage_name] = self.progress.add_task(f"[cyan]{stage_name}...", total=100)
+        self.stage_tasks[stage_name] = self.progress.add_task(f"{stage_name}...", total=100, start=False)
 
     def complete_stage(self) -> None:
-        """Mark the current stage as complete and advance the pipeline."""
+        """Mark the current stage as complete."""
         if self.current_stage and self.current_stage in self.stage_tasks:
             self.progress.update(self.stage_tasks[self.current_stage], completed=100)
-            self.progress.update(self.pipeline_task, advance=20)
 
-    def update_progress(self, completed: float) -> None:
-        """Update the current stage's progress."""
+    def update_progress(self, percent: float) -> None:
+        """Update progress for the current stage."""
         if self.current_stage and self.current_stage in self.stage_tasks:
-            self.progress.update(self.stage_tasks[self.current_stage], completed=completed)
+            self.progress.update(self.stage_tasks[self.current_stage], completed=percent)
+
+
+PipelineFunctionType = PipelineFunction | Callable[..., None]
 
 
 @dataclass
 class PipelineContext:
     """Holds pipeline state and configuration."""
 
-    progress: "PipelineProgress"
+    progress: PipelineProgress
     source_language: str = "chinese"
     target_language: str | None = None
-    _current_stage: str | None = None
-    _current_stage_fn: PipelineFunction | None = None
-    _stage_artifacts: dict[str, set[str]] = field(default_factory=dict)
+    _current_fn: PipelineFunction | None = None
+    _input_file: Path | None = None
+    _stage_inputs: dict[str, Path] = field(default_factory=dict)
+    _artifacts: dict[str, dict[str, Any]] = field(default_factory=dict)
 
-    def for_stage(self, pipeline_fn: PipelineFunction) -> "PipelineContext":
-        """Create a stage-specific context."""
-        stage_name = pipeline_fn.__name__
-        # Store artifact keys if function is decorated
-        produced_artifacts = getattr(pipeline_fn, "produced_artifacts", None)
-        if produced_artifacts is not None:
-            self._stage_artifacts[stage_name] = set(produced_artifacts.keys())
-        else:
-            # Function produces single artifact keyed by function name
-            self._stage_artifacts[stage_name] = {stage_name}
+    def set_input_file(self, input_file: Path) -> None:
+        """Set the input file."""
+        self._input_file = input_file
+        self._stage_inputs["input_path"] = input_file
 
-        # Start progress tracking for this stage
-        self.progress.start_stage(stage_name)
+    def update_stage_input(self, artifact_name: str, input_path: Path) -> None:
+        """Update the input file for an artifact."""
+        self._stage_inputs[artifact_name] = input_path
 
-        # Create new context with stage name and function set
-        return replace(self, _current_stage=stage_name, _current_stage_fn=pipeline_fn)
-
-    def get_artifact_path(self, artifact_name: str | None = None) -> Path:
-        """Get path for an artifact within the current stage.
+    def get_input_hash(self, artifact_name: str) -> str:
+        """
+        Get hash of input files for an artifact.
 
         Args:
-            artifact_name: Name of the artifact. If None, uses the stage name.
+            artifact_name: The name of the artifact for which to compute the hash
+
+        Returns:
+            An 8-character hash based on the content of input files
+
+        Raises:
+            ValueError: If no input files are found for this artifact
         """
-        if not self._current_stage or not self._current_stage_fn:
-            raise ValueError("No current pipeline stage")
+        from . import cache
 
-        valid_artifacts = self._stage_artifacts.get(self._current_stage, set(self._current_stage))
+        input_paths: list[Path] = []
+        for name, path in self._stage_inputs.items():
+            if name == artifact_name or name == "input_path":
+                input_paths.append(path)
 
-        # If no artifact_name provided, use stage name (for single-artifact stages)
+        if not input_paths:
+            raise ValueError(f"No input file set for artifact {artifact_name}")
+
+        # Compute content-based hash
+        return cache.get_content_hash(input_paths)
+
+    def for_stage(self, pipeline_fn: PipelineFunctionType) -> "PipelineContext":
+        """Create a stage-specific context."""
+        # Get artifact definitions from the function
+        produced_artifacts = getattr(pipeline_fn, "produced_artifacts", None)
+        if produced_artifacts is None:
+            # Function produces single artifact named after the function
+            produced_artifacts = {pipeline_fn.__name__: {"extension": "mp3"}}
+
+        # Update artifacts dictionary
+        self._artifacts.update(produced_artifacts)
+
+        # Start progress tracking
+        self.progress.start_stage(pipeline_fn.__name__)
+
+        # Create new context with function set
+        return replace(self, _current_fn=pipeline_fn)
+
+    def get_artifact_path(self, artifact_name: str = "") -> Path:
+        """
+        Get the path to where an artifact should be stored.
+
+        Args:
+            artifact_name: The name of the artifact to get the path for. If not provided and the function
+                          only produces one artifact, that one is used.
+
+        Returns:
+            The path to the artifact file.
+        """
+        if not self._input_file:
+            raise ValueError("Input file not set")
+
+        if not self._current_fn:
+            raise ValueError("No current pipeline function")
+
+        # Get artifact definitions for current function
+        produced_artifacts = getattr(self._current_fn, "produced_artifacts", None)
+        if produced_artifacts is None:
+            produced_artifacts = {self._current_fn.__name__: {"extension": "mp3"}}
+
+        # If no artifact_name provided, use the only artifact if there's just one
         if not artifact_name:
-            if len(valid_artifacts) != 1:
-                msg = f"Expected exactly one artifact for stage '{self._current_stage}'"
-                msg += f", but got {len(valid_artifacts)}"
+            if len(produced_artifacts) != 1:
+                msg = f"Must specify artifact name for function '{self._current_fn.__name__}'"
+                msg += f" which produces multiple artifacts: {list(produced_artifacts.keys())}"
                 raise ValueError(msg)
-            artifact_name = next(iter(valid_artifacts))
+            artifact_name = next(iter(produced_artifacts))
 
-        # Validate artifact belongs to current stage
-        if artifact_name not in valid_artifacts:
-            raise ValueError(f"Invalid artifact '{artifact_name}' for stage '{self._current_stage}'")
+        # Validate artifact belongs to current function
+        if artifact_name not in produced_artifacts:
+            raise ValueError(f"Invalid artifact '{artifact_name}' for function '{self._current_fn.__name__}'")
 
-        # Get extension from the function's produced_artifacts
-        extension = "mp3"  # default
-        produced_artifacts = getattr(self._current_stage_fn, "produced_artifacts", None)
-        if produced_artifacts and artifact_name in produced_artifacts:
-            extension = produced_artifacts[artifact_name].get("extension", "mp3")
+        # Get extension from the artifact definition
+        extension = produced_artifacts[artifact_name].get("extension", "mp3")
 
         # Use cache to get the path
         from . import cache
 
-        return Path(cache.get_cache_path(artifact_name, "temp", f".{extension}"))
+        # Create sanitized name from input file
+        sanitized_name = sanitize_filename(self._input_file.stem.lower())
+
+        # Compute the content-based hash from input files
+        input_hash = self.get_input_hash(artifact_name)
+
+        # Construct the cache key with the hash included
+        cache_key = f"{sanitized_name}_{artifact_name}_{input_hash}"
+
+        # Get the cache path
+        return Path(cache.get_cache_path(cache_key, f".{extension}"))
+
+    def retrieve_from_cache(self, artifact_name: str) -> Path | None:
+        """
+        Check if an artifact is in cache and return its path if found.
+
+        The cache lookup is based on the content hash of input files, ensuring
+        that cache hits only happen when inputs are identical in content.
+
+        Args:
+            artifact_name: The name of the artifact to retrieve
+
+        Returns:
+            Path to the cached artifact if found, None otherwise
+        """
+        if not self._input_file:
+            raise ValueError("Input file not set")
+
+        # Skip cache for terminal artifacts
+        if self._artifacts[artifact_name].get("terminal", False):
+            return None
+
+        # Get input paths for this artifact
+        input_paths: list[Path] = []
+        for name, path in self._stage_inputs.items():
+            if name == artifact_name or name == "input_path":
+                input_paths.append(path)
+
+        # Skip cache retrieval if there's nothing to compute hash from
+        if not input_paths:
+            return None
+
+        from . import cache
+
+        # Create sanitized name from input file
+        sanitized_name = sanitize_filename(self._input_file.stem.lower())
+
+        # Compute content-based hash
+        input_hash = cache.get_content_hash(input_paths)
+
+        # Construct cache key with the hash
+        extension = self._artifacts[artifact_name].get("extension", "mp3")
+        cache_key = f"{sanitized_name}_{artifact_name}_{input_hash}"
+
+        # Get the cache path
+        cache_path = Path(cache.get_cache_path(cache_key, f".{extension}"))
+
+        # Check if the cached file exists
+        if cache_path.exists():
+            return cache_path
+
+        return None
+
+    def store_in_cache(self, artifact_name: str, output_path: Path, input_path: Path | None = None) -> None:
+        """
+        Store an artifact in the cache.
+
+        Uses content-based hashing to create a cache key that uniquely identifies
+        this artifact based on its input content.
+
+        Args:
+            artifact_name: The name of the artifact to store
+            output_path: Path to the artifact file to store
+            input_path: Unused, kept for API compatibility
+        """
+        if not self._input_file:
+            raise ValueError("Input file not set")
+
+        # Skip cache for terminal artifacts
+        if self._artifacts[artifact_name].get("terminal", False):
+            return
+
+        # Make sure the output file exists before trying to cache it
+        if not output_path.exists():
+            logging.warning(f"Cannot cache non-existent file: {output_path}")
+            return
+
+        # Get input paths for this artifact
+        input_paths: list[Path] = []
+        for name, path in self._stage_inputs.items():
+            if name == artifact_name or name == "input_path":
+                input_paths.append(path)
+
+        # Skip caching if there's nothing to compute hash from
+        if not input_paths:
+            logging.warning(f"No input paths for artifact {artifact_name}, skipping cache")
+            return
+
+        from . import cache
+
+        # Create sanitized name from input file
+        sanitized_name = sanitize_filename(self._input_file.stem.lower())
+
+        # Compute content-based hash
+        input_hash = cache.get_content_hash(input_paths)
+
+        # Construct cache key with the hash
+        extension = self._artifacts[artifact_name].get("extension", "mp3")
+        cache_key = f"{sanitized_name}_{artifact_name}_{input_hash}"
+
+        # Read and store the file data
+        with open(output_path, "rb") as f:
+            cache.cache_store(cache_key, f.read(), f".{extension}")
 
     @property
     def stage_task_id(self) -> TaskID | None:
         """Get the task ID for the current stage."""
-        if not self._current_stage:
+        if not self._current_fn:
             return None
-        return self.progress.stage_tasks.get(self._current_stage)
+        return self.progress.stage_tasks.get(self._current_fn.__name__)
 
 
-def validate_pipeline(pipeline: Sequence[PipelineFunction], initial_artifacts: dict[str, Any]) -> None:
-    """Validate that all required artifacts will be available when the pipeline runs.
-
-    Args:
-        pipeline: List of pipeline functions to validate
-        initial_artifacts: Dictionary of artifacts available at the start
-
-    Raises:
-        ValueError: If any required artifacts are missing
-    """
+def validate_pipeline(pipeline: Sequence[PipelineFunctionType], initial_artifacts: dict[str, Any]) -> None:
+    """Validate that all required artifacts will be available when the pipeline runs."""
     available_artifacts = set(initial_artifacts.keys())
 
     for func in pipeline:
@@ -221,13 +362,200 @@ def validate_pipeline(pipeline: Sequence[PipelineFunction], initial_artifacts: d
             )
 
         # Add this function's produced artifacts to available artifacts
-        if hasattr(func, "produced_artifacts"):
-            produced_artifacts = func.produced_artifacts  # type: ignore
-            for artifact_name, _artifact_type in produced_artifacts.items():
-                # We don't need to check the type, just add the name to available artifacts
-                available_artifacts.add(artifact_name)
+        produced_artifacts = getattr(func, "produced_artifacts", {func.__name__: {"extension": "mp3"}})
+        for artifact_name, _artifact_type in produced_artifacts.items():
+            available_artifacts.add(artifact_name)
+
+
+@dataclass
+class PipelineRunner:
+    """Manages the execution of a pipeline including caching, artifact tracking, and error handling."""
+
+    context: PipelineContext
+    options: PipelineOptions
+    console: Console
+    artifacts: dict[str, Any]
+    pipeline: list[PipelineFunctionType]
+
+    @classmethod
+    def create(cls, input_file: Path, console: Console, options: PipelineOptions) -> "PipelineRunner":
+        """Create a new pipeline runner with initialized context."""
+        # Initialize context
+        progress = PipelineProgress.create(console)
+        context = PipelineContext(
+            progress=progress,
+            source_language=options.source_language,
+            target_language=options.target_language,
+        )
+        context.set_input_file(input_file)
+
+        # Define pipeline stages
+        pipeline = [transcode, voice_isolation, transcribe, translate, generate_deck]
+        initial_artifacts = {"input_path": input_file}
+
+        return cls(
+            context=context,
+            options=options,
+            console=console,
+            artifacts=initial_artifacts,
+            pipeline=pipeline,
+        )
+
+    def should_use_cache(self, func: PipelineFunctionType) -> bool:
+        """Determine if caching should be used for this function."""
+        if self.options.bypass_cache:
+            return False
+
+        # Check if this is a terminal stage that should bypass cache
+        if isinstance(func, PipelineFunction) and hasattr(func, "produced_artifacts"):
+            for artifact_info in func.produced_artifacts.values():
+                if artifact_info.get("terminal", False):
+                    return False
+
+        return True
+
+    def get_cached_artifacts(self, func: PipelineFunctionType) -> tuple[bool, dict[str, Path]]:
+        """
+        Try to retrieve all artifacts for this function from cache.
+
+        Returns:
+            Tuple of (cache_hit, artifact_paths)
+        """
+        artifact_paths: dict[str, Path] = {}
+
+        if not isinstance(func, PipelineFunction) or not hasattr(func, "produced_artifacts"):
+            return False, {}
+
+        cache_hit = True  # Assume cache hit until we find a miss
+        stage_context = self.context.for_stage(func)
+
+        for artifact_name in func.produced_artifacts:
+            logging.debug(f"Checking cache for {artifact_name}")
+            # Try to retrieve from cache
+            cached_path = stage_context.retrieve_from_cache(artifact_name)
+            if cached_path is None:
+                logging.debug(f"Cache miss for {artifact_name}")
+                cache_hit = False
+                break
+            else:
+                logging.debug(f"Cache hit for {artifact_name} at {cached_path}")
+                artifact_paths[artifact_name] = cached_path
+
+        return cache_hit, artifact_paths
+
+    def store_artifacts_in_cache(self, func: PipelineFunctionType, context: PipelineContext) -> None:
+        """Store all artifacts produced by this function in the cache."""
+        if not isinstance(func, PipelineFunction) or not hasattr(func, "produced_artifacts"):
+            return
+
+        for artifact_name in func.produced_artifacts:
+            artifact_path = context.get_artifact_path(artifact_name)
+            if artifact_path.exists():
+                context.store_in_cache(artifact_name, artifact_path, artifact_path)
+
+    def update_artifacts(self, func: PipelineFunctionType, artifact_paths: dict[str, Path]) -> None:
+        """Update the artifacts dictionary with new paths."""
+        produced_artifacts = getattr(func, "produced_artifacts", {}) if isinstance(func, PipelineFunction) else {}
+
+        for artifact_name, path in artifact_paths.items():
+            self.artifacts[artifact_name] = path
+            # Also store using the stage name as a key if this is the primary artifact
+            if len(produced_artifacts) == 1 or artifact_name == func.__name__:
+                self.artifacts[func.__name__] = path
+
+    def get_function_kwargs(self, func: PipelineFunctionType) -> dict[str, Any]:
+        """Get the required arguments for this function from artifacts."""
+        params = inspect.signature(func).parameters
+        return {name: self.artifacts[name] for name in params if name != "context" and name in self.artifacts}
+
+    def update_input_tracking(
+        self, func: PipelineFunctionType, context: PipelineContext, kwargs: dict[str, Any]
+    ) -> None:
+        """Set up input tracking for all artifacts this function produces."""
+        if not isinstance(func, PipelineFunction) or not hasattr(func, "produced_artifacts") or not kwargs:
+            return
+
+        # Get all input paths that aren't the context
+        input_paths = {name: path for name, path in kwargs.items() if name != "context" and isinstance(path, Path)}
+
+        # For each artifact, set up all inputs
+        for artifact_name in func.produced_artifacts.keys():
+            for _name, input_path in input_paths.items():
+                context.update_stage_input(artifact_name, input_path)
+
+    def execute_stage(self, func: PipelineFunctionType) -> None:
+        """Execute a single pipeline stage with caching."""
+        # Create stage-specific context
+        stage_context = self.context.for_stage(func)
+
+        # Get required arguments from artifacts
+        kwargs = self.get_function_kwargs(func)
+
+        # Set up input tracking for all artifacts this function produces
+        self.update_input_tracking(func, stage_context, kwargs)
+
+        # Check if we should use cache
+        use_cache = self.should_use_cache(func)
+
+        # Try to get cached artifacts if appropriate
+        cache_hit = False
+        artifact_paths: dict[str, Path] = {}
+
+        if use_cache:
+            cache_hit, artifact_paths = self.get_cached_artifacts(func)
+
+        # Run the function if needed
+        if not use_cache or not cache_hit:
+            logging.debug(f"Running {func.__name__} (use_cache={use_cache}, cache_hit={cache_hit})")
+            func(context=stage_context, **kwargs)
+
+            # Store results in cache after running
+            if use_cache:
+                self.store_artifacts_in_cache(func, stage_context)
+
+            # Update artifacts with paths from generated files
+            if isinstance(func, PipelineFunction) and hasattr(func, "produced_artifacts"):
+                generated_paths: dict[str, Path] = {}
+                for artifact_name in func.produced_artifacts:
+                    artifact_path = stage_context.get_artifact_path(artifact_name)
+                    generated_paths[artifact_name] = artifact_path
+                self.update_artifacts(func, generated_paths)
         else:
-            available_artifacts.add(func.__name__)
+            self.console.print(f"[green]Using cached result for {func.__name__}[/]")
+            # Update artifacts with paths from cache
+            self.update_artifacts(func, artifact_paths)
+
+        self.context.progress.complete_stage()
+
+    def run(self) -> Path:
+        """Run the entire pipeline and return the final artifact path."""
+        try:
+            # Validate pipeline before running
+            validate_pipeline(self.pipeline, self.artifacts)
+
+            # Run each stage
+            for func in self.pipeline:
+                try:
+                    self.execute_stage(func)
+                except Exception as e:
+                    # Classify error type
+                    error_type = "SYSTEM_ERROR"
+                    if isinstance(e, ConnectionError | TimeoutError):
+                        error_type = "SERVICE_ERROR"
+                    elif isinstance(e, ValueError):
+                        error_type = "VALIDATION_ERROR"
+
+                    # Enhanced logging with context
+                    logging.error(f"{error_type} in {func.__name__}: {str(e)}", exc_info=True)
+                    self.console.print(f"[red]Error in {func.__name__} ({error_type}): {str(e)}[/]")
+                    raise
+
+            return self.context.get_artifact_path()
+
+        except Exception as e:
+            logging.error(f"Pipeline failed: {str(e)}")
+            self.console.print(f"[red]Error: {str(e)}[/]")
+            raise RuntimeError(f"Pipeline failed: {str(e)}") from e
 
 
 def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -> Path:
@@ -243,81 +571,36 @@ def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -
         logging.info("Cache cleared")
 
     with PipelineProgress.create(console) as progress:
-        try:
-            # Initialize context
-            context = PipelineContext(
-                progress=progress,
-                source_language=options.source_language,
-                target_language=options.target_language,
-            )
+        # Create pipeline runner
+        runner = PipelineRunner.create(input_file, console, options)
+        runner.context.progress = progress
 
-            # Define pipeline stages
-            pipeline = [transcode, voice_isolation, transcribe, translate, generate_deck]
-            initial_artifacts = {"input_path": input_file}
-
-            # Validate pipeline before running
-            validate_pipeline(pipeline, initial_artifacts)
-
-            # Run pipeline
-            artifacts = initial_artifacts
-            for func in pipeline:
-                # Create stage-specific context
-                context = context.for_stage(func)
-
-                # Get required arguments from artifacts
-                params = inspect.signature(func).parameters
-                kwargs = {name: artifacts[name] for name in params if name != "context" and name in artifacts}
-
-                # Run the function
-                try:
-                    func(context=context, **kwargs)
-                except Exception as e:
-                    logging.error(f"{func.__name__} failed: {str(e)}")
-                    console.print(f"[red]Error in {func.__name__}: {str(e)}[/]")
-                    raise
-
-                # Update artifacts with produced artifacts from this stage
-                if hasattr(func, "produced_artifacts"):
-                    for artifact_name in func.produced_artifacts:
-                        artifacts[artifact_name] = context.get_artifact_path(artifact_name)
-
-                progress.complete_stage()
-
-            return context.get_artifact_path()
-
-        except Exception as e:
-            logging.error(f"Pipeline failed: {str(e)}")
-            console.print(f"[red]Error: {str(e)}[/]")
-            sys.exit(1)
+        # Run the pipeline
+        return runner.run()
 
 
-@produces_artifacts(transcode={"extension": "mp3"})
+@pipeline_function(transcode={"extension": "mp3"})
 def transcode(context: PipelineContext, input_path: Path) -> None:
     """Transcode an audio/video file to an audio file suitable for processing."""
     from .transcoder import transcode_audio
 
-    try:
-        output_path = context.get_artifact_path()
-        transcode_audio(input_path, output_path, progress_callback=context.progress.update_progress)
-    except Exception as e:
-        logging.error(f"Transcoding failed: {e}")
-        raise
+    output_path = context.get_artifact_path()
+    transcode_audio(input_path, output_path, progress_callback=context.progress.update_progress)
 
 
-@produces_artifacts(voice_isolation={"extension": "mp3"})
+@pipeline_function(voice_isolation={"extension": "mp3"})
 def voice_isolation(context: PipelineContext, transcode: Path) -> None:
     """Isolate voice from background noise."""
-    from .voice_isolation import VoiceIsolationError, isolate_voice
+    from .voice_isolation import isolate_voice
 
-    try:
-        output_path = context.get_artifact_path()
-        isolate_voice(transcode, output_path, progress_callback=context.progress.update_progress)
-    except VoiceIsolationError as e:
-        context.progress.console.print(f"[red]Voice isolation failed: {e}[/]")
-        sys.exit(1)
+    # Get the output path from context
+    output_path = context.get_artifact_path()
+
+    # Use context's progress update method directly
+    isolate_voice(transcode, output_path, progress_callback=context.progress.update_progress)
 
 
-@produces_artifacts(transcribe={"extension": "srt"})
+@pipeline_function(transcribe={"extension": "srt"})
 def transcribe(context: PipelineContext, voice_isolation: Path) -> None:
     """Transcribe the audio file using OpenAI Whisper and produce an SRT file."""
     from .transcribe import transcribe_audio
@@ -336,21 +619,23 @@ def transcribe(context: PipelineContext, voice_isolation: Path) -> None:
         "russian": "ru",
     }
 
-    language = language_codes.get(context.source_language.lower())
-    if not language:
-        raise ValueError(f"Unsupported language: {context.source_language}")
+    language_code = language_codes.get(context.source_language.lower())
 
+    # Get the output path from context
+    output_path = context.get_artifact_path()
+
+    # Call transcribe_audio with the output path
     transcribe_audio(
         audio_file=voice_isolation,
-        transcript_path=context.get_artifact_path(),
+        transcript_path=output_path,
         model="whisper-1",
         task_id=context.stage_task_id,
         progress=context.progress.progress,
-        language=language,
+        language=language_code,
     )
 
 
-@produces_artifacts(translation={"extension": "srt"}, pronunciation={"extension": "srt"})
+@pipeline_function(translation={"extension": "srt"}, pronunciation={"extension": "srt"})
 def translate(context: PipelineContext, transcribe: Path) -> None:
     """Translate the SRT file to English and create pinyin if needed."""
     from .translate import translate_srt
@@ -369,6 +654,7 @@ def translate(context: PipelineContext, transcribe: Path) -> None:
     )
 
 
+@pipeline_function(deck={"extension": "directory", "terminal": True})
 def generate_deck(
     context: PipelineContext,
     voice_isolation: Path,

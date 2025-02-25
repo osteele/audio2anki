@@ -1,7 +1,7 @@
 """Tests for transcription module."""
 
+import logging
 import os
-from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -9,8 +9,11 @@ import pytest
 from openai import AuthenticationError, OpenAI
 from openai.types.audio import Transcription
 
-from audio2anki import cache
 from audio2anki.transcribe import TranscriptionSegment, load_transcript, save_transcript, transcribe_audio
+
+# Configure logging for tests
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 @pytest.fixture
@@ -35,24 +38,18 @@ def mock_whisper_response() -> Mock:
     return mock_response
 
 
-@pytest.fixture
-def setup_cache() -> Generator[None, None, None]:
-    """Set up and tear down the cache for each test."""
-    cache.init_cache()
-    yield
-    cache.clear_cache()
-
-
 def test_transcribe_audio(
     tmp_path: Path,
     mock_openai: Mock,
     mock_whisper_response: Mock,
-    setup_cache: Generator[None, None, None],
 ) -> None:
     """Test audio transcription with OpenAI API."""
     # Create dummy audio file
     audio_file = tmp_path / "test.mp3"
     audio_file.touch()
+
+    # Create output file path
+    transcript_path = tmp_path / "transcript.srt"
 
     # Set up mock
     mock_openai.audio.transcriptions.create.return_value = mock_whisper_response
@@ -61,15 +58,17 @@ def test_transcribe_audio(
         patch("audio2anki.transcribe.OpenAI", return_value=mock_openai),
         patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}),
     ):
+        # Call the transcribe function
         segments = transcribe_audio(
             audio_file,
-            transcript_path=None,
+            transcript_path=transcript_path,
             model="whisper-1",
             language="english",
             task_id=None,
             progress=None,
         )
 
+        # Verify the segments are correct
         assert len(segments) == 2
         assert segments[0].text == "Hello"
         assert segments[1].text == "world"
@@ -78,26 +77,21 @@ def test_transcribe_audio(
         assert segments[1].start == 2.0
         assert segments[1].end == 4.0
 
-        # Test caching - second call should use cache
-        segments2 = transcribe_audio(
-            audio_file,
-            transcript_path=None,
-            model="whisper-1",
-            language="english",
-            task_id=None,
-            progress=None,
-        )
+        # Verify the transcript file was created
+        assert transcript_path.exists()
 
-        assert segments == segments2
-        # Should only call the API once
-        assert mock_openai.audio.transcriptions.create.call_count == 1
+        # Verify the API was called
+        mock_openai.audio.transcriptions.create.assert_called_once()
 
 
-def test_transcribe_error(tmp_path: Path, mock_openai: Mock, setup_cache: Generator[None, None, None]) -> None:
+def test_transcribe_error(tmp_path: Path, mock_openai: Mock) -> None:
     """Test transcription error handling."""
     # Create dummy audio file
     audio_file = tmp_path / "test.mp3"
     audio_file.touch()
+
+    # Create output file path
+    transcript_path = tmp_path / "transcript.srt"
 
     # Set up mock error
     mock_openai.audio.transcriptions.create.side_effect = AuthenticationError(
@@ -113,7 +107,7 @@ def test_transcribe_error(tmp_path: Path, mock_openai: Mock, setup_cache: Genera
         with pytest.raises(RuntimeError, match=r"Transcription failed: Incorrect API key provided: test-key"):
             transcribe_audio(
                 audio_file,
-                transcript_path=None,
+                transcript_path=transcript_path,
                 model="whisper-1",
                 language="english",
                 task_id=None,
@@ -148,12 +142,14 @@ def test_transcribe_with_length_filters(
     tmp_path: Path,
     mock_openai: Mock,
     mock_whisper_response: Mock,
-    setup_cache: Generator[None, None, None],
 ) -> None:
     """Test transcription with length filters."""
     # Create dummy audio file
     audio_file = tmp_path / "test.mp3"
     audio_file.touch()
+
+    # Create output file path
+    transcript_path = tmp_path / "transcript.srt"
 
     # Set up mock response with segments of different lengths
     mock_whisper_response.segments = [
@@ -168,9 +164,10 @@ def test_transcribe_with_length_filters(
         patch("audio2anki.transcribe.OpenAI", return_value=mock_openai),
         patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}),
     ):
+        # Call transcribe_audio with length filters
         segments = transcribe_audio(
             audio_file,
-            transcript_path=None,
+            transcript_path=transcript_path,
             model="whisper-1",
             language="english",
             task_id=None,
@@ -185,63 +182,10 @@ def test_transcribe_with_length_filters(
         assert segments[0].start == 16.0
         assert segments[0].end == 18.0
 
-        # Test caching with filters
-        segments2 = transcribe_audio(
-            audio_file,
-            transcript_path=None,
-            model="whisper-1",
-            language="english",
-            task_id=None,
-            progress=None,
-            min_length=1.5,
-            max_length=10.0,
-        )
+        # Verify the transcript file was created and contains only the filtered segments
+        assert transcript_path.exists()
 
-        assert segments == segments2
-        # Should only call the API once
-        assert mock_openai.audio.transcriptions.create.call_count == 1
-
-
-def test_bypass_cache(
-    tmp_path: Path,
-    mock_openai: Mock,
-    mock_whisper_response: Mock,
-    setup_cache: Generator[None, None, None],
-) -> None:
-    """Test bypassing the cache."""
-    # Create dummy audio file
-    audio_file = tmp_path / "test.mp3"
-    audio_file.touch()
-
-    # Set up mock
-    mock_openai.audio.transcriptions.create.return_value = mock_whisper_response
-
-    with (
-        patch("audio2anki.transcribe.OpenAI", return_value=mock_openai),
-        patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}),
-    ):
-        # First call with normal cache
-        cache.init_cache(bypass=False)
-        segments1 = transcribe_audio(
-            audio_file,
-            transcript_path=None,
-            model="whisper-1",
-            language="english",
-            task_id=None,
-            progress=None,
-        )
-
-        # Second call with bypass_cache=True
-        cache.init_cache(bypass=True)
-        segments2 = transcribe_audio(
-            audio_file,
-            transcript_path=None,
-            model="whisper-1",
-            language="english",
-            task_id=None,
-            progress=None,
-        )
-
-        assert segments1 == segments2
-        # Should call the API twice
-        assert mock_openai.audio.transcriptions.create.call_count == 2
+        # Load the created transcript and verify it contains only the filtered segments
+        loaded_segments = load_transcript(transcript_path)
+        assert len(loaded_segments) == 1
+        assert loaded_segments[0].text == "Good length"

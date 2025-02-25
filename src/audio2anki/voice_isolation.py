@@ -10,8 +10,6 @@ import httpx
 import librosa
 import soundfile as sf
 
-from . import cache
-
 logger = logging.getLogger(__name__)
 
 API_BASE_URL = "https://api.elevenlabs.io/v1"
@@ -20,13 +18,33 @@ API_BASE_URL = "https://api.elevenlabs.io/v1"
 class VoiceIsolationError(Exception):
     """Error during voice isolation."""
 
+    def __init__(self, message: str, cause: Exception | None = None):
+        super().__init__(message)
+        self.cause = cause
+        self.error_message = message  # Store message in an attribute that won't conflict with Exception
 
-def _call_elevenlabs_api(input_path: Path, progress_callback: Callable[[float], None] | None = None) -> Path:
-    """Call Eleven Labs API to isolate voice from background noise."""
+    def __str__(self) -> str:
+        cause_str = f": {self.cause}" if self.cause else ""
+        return f"Voice Isolation Error{cause_str}: {self.error_message}"
+
+
+def _call_elevenlabs_api(input_path: Path, progress_callback: Callable[[float], None]) -> Path:
+    """
+    Call Eleven Labs API to isolate voice from background noise.
+
+    Args:
+        input_path: Path to input audio file
+        progress_callback: Optional callback function to report progress
+
+    Returns:
+        Path to the raw isolated voice audio file from the API
+
+    Raises:
+        VoiceIsolationError: If API call fails
+    """
 
     def update_progress(percent: float) -> None:
-        if progress_callback:
-            progress_callback(percent * 0.7)
+        progress_callback(percent * 0.7)  # Scale to 70% of total progress
 
     api_key = os.getenv("ELEVENLABS_API_KEY")
     if not api_key:
@@ -54,7 +72,7 @@ def _call_elevenlabs_api(input_path: Path, progress_callback: Callable[[float], 
                                 error_msg = error_data.get("detail", "API error message")
                             except Exception:
                                 error_msg = f"API request failed: {response.status_code}"
-                            raise VoiceIsolationError(error_msg)
+                            raise VoiceIsolationError(error_msg) from None
 
                         logger.debug("Streaming isolated audio from API")
                         update_progress(30)
@@ -72,22 +90,18 @@ def _call_elevenlabs_api(input_path: Path, progress_callback: Callable[[float], 
                         os.fsync(temp_file.fileno())
 
             if total_chunks == 0:
-                raise VoiceIsolationError("No audio data received from API")
+                raise VoiceIsolationError("No audio data received from API") from None
 
             update_progress(70)
-            return temp_path
+            return Path(temp_path)
 
     except httpx.TimeoutException as err:
-        raise VoiceIsolationError("API request timed out") from err
+        raise VoiceIsolationError("API request timed out", cause=err) from err
     except httpx.RequestError as err:
-        raise VoiceIsolationError(f"API request failed: {err}") from err
-    except Exception as err:
-        raise VoiceIsolationError(f"Voice isolation failed: {err}") from err
+        raise VoiceIsolationError(f"API request failed: {err}", cause=err) from err
 
 
-def _match_audio_properties(
-    source_path: Path, target_path: Path, progress_callback: Callable[[float], None] | None = None
-) -> Path:
+def _match_audio_properties(source_path: Path, target_path: Path, progress_callback: Callable[[float], None]) -> None:
     """
     Match the duration of the target audio to the source audio by adjusting sample rate.
 
@@ -96,86 +110,53 @@ def _match_audio_properties(
         target_path: Path to target audio file (to be adjusted)
         progress_callback: Optional callback function to report progress
 
-    Returns:
-        Path to the adjusted audio file
-
     Raises:
         VoiceIsolationError: If audio adjustment fails
     """
 
     def update_progress(percent: float) -> None:
-        if progress_callback:
-            progress_callback(70 + percent * 0.3)  # Scale remaining 30% of progress
+        progress_callback(70 + percent * 0.3)  # Scale remaining 30% of progress
 
-    # Check adjustment cache
-    cache_params = {
-        "source_hash": cache.compute_file_hash(source_path),
-        "target_hash": cache.compute_file_hash(target_path),
-    }
+    # Load durations
+    source_duration = librosa.get_duration(path=str(source_path))
+    # First load without resampling to get the raw samples
+    y, original_sr = librosa.load(str(target_path), sr=None)
+    target_duration = librosa.get_duration(y=y, sr=original_sr)
 
-    if cache.cache_retrieve("voice_isolation_adjusted", target_path, ".mp3", extra_params=cache_params):
-        cached_path = cache.get_cache_path("voice_isolation_adjusted", cache_params["target_hash"], ".mp3")
-        logger.debug(f"Using cached adjusted audio file: {cached_path}")
-        update_progress(30)
-        return Path(cached_path)
+    logger.debug(f"Source duration: {source_duration:.2f}s, Target duration: {target_duration:.2f}s")
+    update_progress(10)
 
-    try:
-        # Load durations
-        source_duration = librosa.get_duration(path=str(source_path))
-        # First load without resampling to get the raw samples
-        y, original_sr = librosa.load(str(target_path), sr=None)
-        target_duration = librosa.get_duration(y=y, sr=original_sr)
+    # Calculate the required sample rate adjustment
+    adjusted_sr = int(original_sr * (target_duration / source_duration))
+    logger.debug(f"Adjusting sample rate from {original_sr} to {adjusted_sr} Hz")
 
-        logger.debug(f"Source duration: {source_duration:.2f}s, Target duration: {target_duration:.2f}s")
-        update_progress(10)
+    # Save with adjusted sample rate
+    sf.write(target_path, y, adjusted_sr)
 
-        if abs(source_duration - target_duration) > 0.1:
-            # Calculate the required sample rate adjustment
-            adjusted_sr = int(original_sr * (target_duration / source_duration))
-            logger.debug(f"Adjusting sample rate from {original_sr} to {adjusted_sr} Hz")
-
-            # Save with adjusted sample rate
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
-                temp_path = Path(temp_file.name)
-                sf.write(temp_path, y, adjusted_sr)
-
-                # Cache the adjusted result
-                with open(temp_path, "rb") as f:
-                    cached_path = cache.cache_store(
-                        "voice_isolation_adjusted", target_path, f.read(), ".mp3", extra_params=cache_params
-                    )
-
-                os.unlink(temp_path)
-        else:
-            # If no adjustment needed, cache the original
-            with open(target_path, "rb") as f:
-                cached_path = cache.cache_store(
-                    "voice_isolation_adjusted", target_path, f.read(), ".mp3", extra_params=cache_params
-                )
-
-        update_progress(30)
-        return Path(cached_path)
-
-    except Exception as e:
-        raise VoiceIsolationError(f"Failed to adjust audio properties: {e}") from e
+    update_progress(30)
 
 
 def isolate_voice(
     input_path: Path,
     output_path: Path,
-    progress_callback: Callable[[float], None] | None = None,
+    progress_callback: Callable[[float], None],
 ) -> None:
-    """Isolate voice from background noise using Eleven Labs API."""
-    try:
-        # Get isolated voice from API into a temporary file
-        temp_isolated_path = _call_elevenlabs_api(input_path, progress_callback)
+    """
+    Isolate voice from background noise using Eleven Labs API and match original audio properties.
 
-        try:
-            # Match audio properties and save to output path
-            _match_audio_properties(input_path, temp_isolated_path, progress_callback)
-        finally:
-            # Clean up temporary file
-            if temp_isolated_path.exists():
-                temp_isolated_path.unlink()
-    except Exception as e:
-        raise VoiceIsolationError(f"Voice isolation failed: {e}") from e
+    Args:
+        input_path: Path to input audio file
+        output_path: Path to output audio file
+        progress_callback: Optional callback function to report progress
+
+    Raises:
+        VoiceIsolationError: If voice isolation fails
+    """
+    # First get the isolated voice from API
+    isolated_path = _call_elevenlabs_api(input_path, progress_callback)
+
+    # Then match the audio properties
+    try:
+        _match_audio_properties(isolated_path, output_path, progress_callback)
+    finally:
+        os.unlink(isolated_path)

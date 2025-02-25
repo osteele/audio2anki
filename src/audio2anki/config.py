@@ -13,7 +13,7 @@ import tomllib
 logger = logging.getLogger(__name__)
 
 # Default configuration values
-DEFAULT_CONFIG = {
+DEFAULT_CONFIG: dict[str, Any] = {
     "clean_files": True,
     "use_cache": True,
     "cache_expiry_days": 7,
@@ -69,7 +69,7 @@ def get_app_paths() -> dict[str, Path]:
     return {
         "config_dir": Path(CONFIG_DIR),
         "config_file": Path(CONFIG_DIR) / CONFIG_FILE,
-        "cache_dir": Path(cache.CACHE_DIR),
+        "cache_dir": cache.CACHE_DIR,
     }
 
 
@@ -169,8 +169,8 @@ def set_config_value(key: str, value: str) -> tuple[bool, str]:
     if key not in DEFAULT_CONFIG:
         return False, f"Unknown configuration key: {key}"
 
-    default_type = type(DEFAULT_CONFIG[key])
-    converted_value: bool | int | str | None = None
+    default_type: Any = type(DEFAULT_CONFIG[key])
+    converted_value: Any = None
     try:
         if default_type is bool:
             converted_value = value.lower() in ("true", "1", "yes", "on")

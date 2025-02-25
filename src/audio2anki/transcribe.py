@@ -8,8 +8,6 @@ import httpx
 from openai import OpenAI
 from rich.progress import Progress, TaskID
 
-from . import cache
-
 
 @dataclass
 class TranscriptionSegment:
@@ -102,7 +100,7 @@ def save_transcript(segments: list[TranscriptionSegment], file: Path) -> None:
 
 def transcribe_audio(
     audio_file: Path,
-    transcript_path: Path | None,
+    transcript_path: Path,
     model: str,
     task_id: TaskID | None = None,
     progress: Progress | None = None,
@@ -114,7 +112,7 @@ def transcribe_audio(
 
     Args:
         audio_file: Path to audio file
-        transcript_path: Path to transcript file (optional)
+        transcript_path: Path where transcript will be saved
         model: Whisper model to use (e.g. "whisper-1")
         task_id: Progress bar task ID (optional)
         progress: Progress bar instance (optional)
@@ -133,22 +131,6 @@ def transcribe_audio(
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise ValueError("OPENAI_API_KEY environment variable not set")
-
-    # Use .srt extension for caching
-    cache_ext = ".srt"
-    cache_params = {
-        "model": model,
-        "language": language,
-        "min_length": min_length,
-        "max_length": max_length,
-    }
-
-    if cache.cache_retrieve("transcribe", audio_file, cache_ext, cache_params):
-        cache_path = Path(cache.get_cache_path("transcribe", cache.compute_file_hash(audio_file), cache_ext))
-        segments = load_transcript(cache_path)
-        if progress and task_id:
-            progress.update(task_id, completed=100)
-        return segments
 
     # Initialize OpenAI client
     client = OpenAI(api_key=api_key)
@@ -196,15 +178,8 @@ def transcribe_audio(
 
         segments.append(TranscriptionSegment(start=start, end=end, text=segment.text.strip()))
 
-    # Save to cache
-    transcript_content = (
-        format_srt(segments) if cache_ext == ".srt" else "\n".join(f"{s.start}\t{s.end}\t{s.text}" for s in segments)
-    )
-    cache.cache_store("transcribe", audio_file, transcript_content.encode(), cache_ext, extra_params=cache_params)
-
-    # Save transcript if path provided
-    if transcript_path:
-        save_transcript(segments, transcript_path)
+    # Save transcript to the output path
+    save_transcript(segments, transcript_path)
 
     if progress and task_id:
         progress.update(task_id, completed=100)

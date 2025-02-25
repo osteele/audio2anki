@@ -13,12 +13,13 @@ This document describes a generalized pipeline architecture for the audio-to-ank
 
 The pipeline is implemented as a sequence of Python functions, where each function:
 1. Explicitly declares its inputs through parameter names
-2. Produces artifacts that become inputs for subsequent stages
+2. Produces one or more named artifacts that become inputs for subsequent stages
 3. Receives a context object containing pipeline-wide configuration and progress tracking
 
 ### Key Features
 
-- **Explicit Data Flow:** Each function's inputs and outputs are clearly defined through its signature
+- **Artifact-Centric Design:** Each pipeline function produces one or more named artifacts
+- **Explicit Data Flow:** Each function's inputs and outputs are clearly defined through its signature and artifact declarations
 - **Static Validation:** The pipeline validates all required artifacts are available before execution
 - **Type Safety:** Comprehensive type hints throughout the codebase
 - **Progress Tracking:** Integrated progress reporting for each pipeline stage
@@ -29,21 +30,22 @@ The pipeline is implemented as a sequence of Python functions, where each functi
 Each operation in the pipeline has the following structure:
 
 ```python
+@produces_artifacts(output_name={"extension": "mp3"})  # Optional: declare artifact name and properties
 def operation_name(
     context: PipelineContext,
-    required_artifact1: Path,
-    required_artifact2: str,
+    required_artifact1: Path,  # Name matches a previous stage's artifact name
     optional_param: int | None = None,
 ) -> None:
     """Process artifacts.
     
     Args:
         context: Pipeline-wide configuration and progress
-        required_artifact1: First required input
-        required_artifact2: Second required input
+        required_artifact1: Required input artifact
         optional_param: Optional configuration
     """
 ```
+
+If a function is not decorated with `@produces_artifacts`, it produces a single artifact named after the function.
 
 ### Core Components
 
@@ -55,11 +57,12 @@ def operation_name(
        progress: PipelineProgress
        source_language: str = "chinese"
        target_language: str | None = None
+       _artifacts: dict[str, dict[str, Any]]  # Maps artifact names to their properties
    ```
 
 2. **Pipeline Runner:**
    - Manages the execution of pipeline stages
-   - Tracks artifacts in a dictionary
+   - Tracks artifacts in a dictionary keyed by artifact name
    - Validates artifact availability before execution
    - Handles errors and progress reporting
 
@@ -72,7 +75,55 @@ def operation_name(
        """Validate that all required artifacts will be available."""
    ```
 
-### Detailed Operations
+### Artifact Naming and Caching
+
+- Each artifact has a unique name, either:
+  - Specified in the `@pipeline_function` decorator, or
+  - Defaulting to the function name if not decorated
+- Each pipeline stage specifies the names of its input artifacts through parameter names (other than `context`)
+- The artifact filename has the format `{sanitized_input_name}_{artifact_name}_{hash}.{extension}`, where:
+  - `sanitized_input_name` is derived from the original input file to the pipeline
+  - `artifact_name` is the name of the artifact produced by the pipeline stage
+  - `hash` is derived from the inputs to the pipeline stage:
+    - If the pipeline stage has a single input artifact, hash is the first eight characters of the md5 hash of the input content
+    - If the pipeline stage has multiple input artifacts, the full md5 hashes of all input contents are concatenated and hashed again, with the first eight characters used
+- Each pipeline function can produce one or more artifacts
+- Artifacts are referenced by name in subsequent pipeline stages' parameters
+
+### Example Pipeline
+
+```python
+@produces_artifacts(voice_only={"extension": "mp3"})
+def voice_isolation(context: PipelineContext, transcode: Path) -> None:
+    """Isolate voice from background noise."""
+    output_path = context.get_artifact_path("voice_only")
+    # Process audio...
+
+@produces_artifacts(
+    transcript={"extension": "srt"},
+    timestamps={"extension": "json"}
+)
+def transcribe(context: PipelineContext, voice_only: Path) -> None:
+    """Transcribe audio and produce transcript with timestamps."""
+    transcript_path = context.get_artifact_path("transcript")
+    timestamps_path = context.get_artifact_path("timestamps")
+    # Generate transcript...
+```
+
+### Caching Behavior
+
+- Artifacts are cached based on their unique names and content-based hashes
+- The hash is computed from the content of the input artifacts, not just their names
+- If a cached artifact exists with the matching hash, the stage is skipped
+- Processing modules don't handle caching; they always process their inputs
+- Intermediate files within a stage should use temporary files
+- Cache lookup strategy:
+  1. Compute hash from input artifact content
+  2. Look for artifact with the filename pattern `{sanitized_input_name}_{artifact_name}_{hash}.{extension}`
+  3. If found, use the cached artifact instead of reprocessing
+  4. If not found, process the stage and cache the result with the hash-based filename
+
+## Detailed Operations
 
 1. **Audio Channel Transcoding:**
    ```python
@@ -109,48 +160,6 @@ def operation_name(
    ) -> None:
        """Generate Anki flashcard deck."""
    ```
-
-## Artifact Management
-
-### Naming Convention
-- Artifacts are named using the pattern `{basename}_{stage}_{hash}.{ext}`
-  - `basename` is derived from the input file (e.g., "dialog" from "Dialogue.mp3")
-  - `stage` is either the pipeline function name or a key specified in `get_artifact_path()`
-  - `hash` is an MD5 hash of the input file content
-  - `ext` is the appropriate file extension for the artifact type
-
-### Path Generation
-The `PipelineContext` provides two ways to get artifact paths:
-1. `artifact_path` property - For pipeline functions that produce a single artifact
-2. `get_artifact_path(key)` - For pipeline functions that produce multiple artifacts
-
-Pipeline functions are decorated with `@produces_artifacts` to specify their outputs:
-```python
-# Single artifact
-@produces_artifacts(output=Path)
-def transcode(context: PipelineContext, input_path: Path) -> None:
-    output_path = context.artifact_path
-    # Process input_path to output_path
-
-# Multiple artifacts
-@produces_artifacts(translation=Path, pronunciation=Path)
-def translate(context: PipelineContext, input_path: Path) -> None:
-    translation_path = context.get_artifact_path('translation')
-    pronunciation_path = context.get_artifact_path('pronunciation')
-    # Process input_path to both output paths
-```
-
-### Caching
-- The pipeline runner checks for existing artifacts before executing each stage
-- If a cached artifact exists with the expected name, the stage is skipped
-- Processing modules don't handle caching; they always process their inputs
-- Intermediate files within a stage should use temporary files
-
-### Stage-Specific Context
-Each pipeline function receives a stage-specific context created by `context.for_stage(stage_name)`. This context:
-- Validates artifact path access is within a pipeline stage
-- Ensures `artifact_path` is only used for single-artifact stages
-- Validates `get_artifact_path()` keys match the stage's `@produces_artifacts` declaration
 
 ## Progress Tracking
 

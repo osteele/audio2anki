@@ -31,7 +31,7 @@ dev = [
     "ruff>=0.1.9",
     "pytest>=7.4.4",
     "pydub-stubs>=0.25.1.5",
-    "pyright>=1.1.394",
+    "pyright>=1.1.396",
 ]
 
 [tool.ruff]
@@ -54,7 +54,20 @@ known-first-party = ["audio2anki"]
 
 [tool.pyright]
 reportIncompatibleMethodOverride = "none"
+reportPrivateUsage = "warning"
+reportUnknownLambdaType = "warning"
+reportUnknownMemberType = "warning"
+reportUnknownParameterType = "warning"
+reportUnknownVariableType = "warning"
+reportMissingParameterType = "warning"
+pythonVersion = "3.11"
+pythonPlatform = "Darwin"
+reportMissingTypeStubs = false
+useLibraryCodeForTypes = true
 stubPath = "stubs"
+executionEnvironments = [
+    { root = "tests", extraPaths = ["src"], reportPrivateUsage = false, reportMissingImports = false, reportUnknownVariableType = false, reportUnknownParameterType = false }
+]
 
 [project.scripts]
 audio2anki = "audio2anki.main:main"
