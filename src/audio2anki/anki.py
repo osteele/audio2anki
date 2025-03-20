@@ -162,7 +162,10 @@ def generate_anki_deck(
         raise TypeError("Expected PipelineProgress object")
 
     input_path = Path(input_data)
-    deck_dir = Path.cwd() / "deck"  # Use existing deck directory
+
+    # Use the output_path from kwargs if provided, otherwise use current directory
+    output_path = kwargs.get("output_path")
+    deck_dir = Path.cwd() if output_path is None else Path(output_path)
 
     # Load segments from the translation file
     translation_segments = load_transcript(input_path)
@@ -200,7 +203,7 @@ def generate_anki_deck(
     # Create the Anki deck
     deck_dir = create_anki_deck(
         translation_segments,
-        deck_dir.parent,  # Use parent directory since create_anki_deck will append 'deck'
+        deck_dir,  # Use the specified output directory
         task_id,
         pipeline_progress.progress,
         input_audio_file=input_audio_file,

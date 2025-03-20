@@ -380,10 +380,12 @@ def test_pipeline_stages(test_audio_file: Path, tmp_path: Path) -> None:
                     mock_translate_srt.side_effect = mock_translate_srt_impl
 
                     # Mock generate_anki_deck
-                    def generate_deck_side_effect(**kwargs: Any) -> None:
+                    def generate_deck_side_effect(**kwargs: Any) -> Path:
                         if not dummy_result_path.exists():
                             dummy_result_path.mkdir(exist_ok=True)
-                        return None
+                        # Set the deck_path in the cache to the dummy_result_path
+                        mock_cache.deck_path = dummy_result_path
+                        return dummy_result_path
 
                     mock_generate_anki_deck.side_effect = generate_deck_side_effect
 

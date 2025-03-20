@@ -93,13 +93,21 @@ class PipelineProgress:
 
     def start_stage(self, stage_name: str) -> None:
         """Start tracking progress for a new stage."""
-        self.current_stage = stage_name
-        self.stage_tasks[stage_name] = self.progress.add_task(f"{stage_name}...", total=100, start=False)
+        # Only create a new task if one doesn't already exist for this stage
+        if stage_name not in self.stage_tasks:
+            self.current_stage = stage_name
+            self.stage_tasks[stage_name] = self.progress.add_task(f"{stage_name}...", total=100, start=False)
+        else:
+            # Just set the current stage if the task already exists
+            self.current_stage = stage_name
 
     def complete_stage(self) -> None:
         """Mark the current stage as complete."""
         if self.current_stage and self.current_stage in self.stage_tasks:
-            self.progress.update(self.stage_tasks[self.current_stage], completed=100)
+            task_id = self.stage_tasks[self.current_stage]
+            # Set progress to 100% and mark as completed to stop the spinner
+            self.progress.update(task_id, completed=100)
+            self.progress.stop_task(task_id)
 
     def update_progress(self, percent: float) -> None:
         """Update progress for the current stage."""
@@ -381,6 +389,10 @@ class PipelineRunner:
             if len(produced_artifacts) == 1 or artifact_name == func.__name__:
                 self.artifacts[func.__name__] = path
 
+        # Special handling for terminal artifacts like 'deck'
+        if func.__name__ == "generate_deck" and "deck" in artifact_paths:
+            self.artifacts["deck"] = artifact_paths["deck"]
+
     def get_function_kwargs(self, func: PipelineFunctionType) -> dict[str, Any]:
         """Get the required arguments for this function from artifacts."""
         params = inspect.signature(func).parameters
@@ -468,7 +480,17 @@ class PipelineRunner:
                     self.console.print(f"[red]Error in {func.__name__} ({error_type}): {str(e)}[/]")
                     raise
 
-            return self.context.get_artifact_path()
+            # Get the deck path from the cache
+            from . import cache
+
+            deck_path = cache.get_cache().deck_path
+
+            if deck_path and deck_path.exists():
+                # Print success message with the actual deck path
+                self.console.print(f"\nDeck created at: {deck_path}")
+                return deck_path
+            else:
+                raise ValueError("Pipeline completed but no deck artifact was produced")
 
         except Exception as e:
             logging.error(f"Pipeline failed: {str(e)}")
@@ -589,7 +611,12 @@ def generate_deck(
     """Generate an Anki flashcard deck from the processed data."""
     from .anki import generate_anki_deck
 
-    generate_anki_deck(
+    # For the output deck, use the current working directory directly
+    # The create_anki_deck function will append "/deck" to this path
+    output_path = Path.cwd()
+
+    # Generate the Anki deck
+    deck_dir = generate_anki_deck(
         input_data=translation,  # translation file contains the main content
         input_audio_file=voice_isolation,
         transcription_file=transcribe,
@@ -598,5 +625,10 @@ def generate_deck(
         target_language=context.target_language,
         task_id=context.stage_task_id,
         progress=context.progress,
-        output_path="deck",
+        output_path=output_path,
     )
+
+    # Store the actual deck path in the artifacts dictionary for the PipelineRunner to use
+    from .cache import get_cache
+
+    get_cache().deck_path = deck_dir

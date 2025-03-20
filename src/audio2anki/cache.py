@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 class Cache(Protocol):
     """Protocol for cache implementations."""
 
+    deck_path: Path | None
+
     def get_path(self, artifact_name: str, extension: str) -> Path:
         """
         Get the path to an artifact file.
@@ -56,6 +58,7 @@ class TempDirCache(Cache):
         """
         self.temp_dir = Path(tempfile.mkdtemp(prefix="audio2anki_"))
         self.keep_files = keep_files
+        self.deck_path: Path | None = None
         logger.debug(f"Created temporary cache directory: {self.temp_dir}")
 
     def get_path(self, artifact_name: str, extension: str) -> Path:

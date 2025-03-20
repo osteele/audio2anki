@@ -101,62 +101,81 @@ def _call_elevenlabs_api(input_path: Path, progress_callback: Callable[[float], 
         raise VoiceIsolationError(f"API request failed: {err}", cause=err) from err
 
 
-def _match_audio_properties(source_path: Path, target_path: Path, progress_callback: Callable[[float], None]) -> None:
+def _isolate_vocals(input_path: str, output_dir: str, progress_callback: Callable[[float], None] | None = None) -> None:
     """
-    Match the duration of the target audio to the source audio by adjusting sample rate.
+    Isolate vocals from the input audio file using the ElevenLabs API.
 
     Args:
-        source_path: Path to source audio file (original)
-        target_path: Path to target audio file (to be adjusted)
-        progress_callback: Optional callback function to report progress
-
-    Raises:
-        VoiceIsolationError: If audio adjustment fails
+        input_path: Path to the input audio file
+        output_dir: Directory where isolated vocals will be saved
+        progress_callback: Callback function to report progress
     """
+    if progress_callback is None:
+        # Define a no-op function if no callback is provided
+        def progress_callback_noop(_: float) -> None:
+            return None
 
-    def update_progress(percent: float) -> None:
-        progress_callback(70 + percent * 0.3)  # Scale remaining 30% of progress
+        progress_callback = progress_callback_noop
 
-    # Load durations
-    source_duration = librosa.get_duration(path=str(source_path))
-    # First load without resampling to get the raw samples
-    y, original_sr = librosa.load(str(target_path), sr=None)
-    target_duration = librosa.get_duration(y=y, sr=original_sr)
+    # Call the API to isolate the vocals
+    isolated_path = _call_elevenlabs_api(Path(input_path), progress_callback)
 
-    logger.debug(f"Source duration: {source_duration:.2f}s, Target duration: {target_duration:.2f}s")
-    update_progress(10)
+    # Define the output path for the isolated vocals
+    output_vocals_path = Path(output_dir) / "vocals.wav"
 
-    # Calculate the required sample rate adjustment
-    adjusted_sr = int(original_sr * (target_duration / source_duration))
-    logger.debug(f"Adjusting sample rate from {original_sr} to {adjusted_sr} Hz")
+    # Copy the isolated vocals to the output directory
+    import shutil
 
-    # Save with adjusted sample rate
-    sf.write(target_path, y, adjusted_sr)
+    shutil.copy(isolated_path, output_vocals_path)
 
-    update_progress(30)
+
+def _match_audio_properties(
+    source_path: Path, target_path: Path, progress_callback: Callable[[float], None] | None = None
+) -> None:
+    """
+    Match audio properties of the source file to the target file.
+
+    Args:
+        source_path: Path to the source audio file
+        target_path: Path to match and save the result
+        progress_callback: Callback function to report progress
+    """
+    # Ensure source file exists
+    if not source_path.exists():
+        raise FileNotFoundError(f"Source audio file not found: {source_path}")
+
+    # Load the source file (vocals)
+    y, sr = librosa.load(str(source_path), sr=None)
+
+    # Save to target path using the source sample rate (cast to int for soundfile)
+    sf.write(target_path, y, int(sr))
+
+    if progress_callback:
+        progress_callback(100)
 
 
 def isolate_voice(
-    input_path: Path,
-    output_path: Path,
-    progress_callback: Callable[[float], None],
+    input_path: Path, output_path: Path, progress_callback: Callable[[float], None] | None = None
 ) -> None:
     """
-    Isolate voice from background noise using Eleven Labs API and match original audio properties.
+    Isolate voice from background noise using vocal remover.
 
     Args:
-        input_path: Path to input audio file
-        output_path: Path to output audio file
-        progress_callback: Optional callback function to report progress
-
-    Raises:
-        VoiceIsolationError: If voice isolation fails
+        input_path: Path to the input audio file
+        output_path: Path to save the isolated voice
+        progress_callback: Callback function to report progress
     """
-    # First get the isolated voice from API
-    isolated_path = _call_elevenlabs_api(input_path, progress_callback)
+    # Create a temporary directory for processing
+    with tempfile.TemporaryDirectory() as temp_dir:
+        # Define temporary isolated voice path
+        isolated_path = Path(temp_dir) / "vocals.wav"
 
-    # Then match the audio properties
-    try:
+        # Run vocal isolation
+        _isolate_vocals(str(input_path), temp_dir, progress_callback)
+
+        # Ensure the isolated file was created before proceeding
+        if not isolated_path.exists():
+            raise FileNotFoundError(f"Voice isolation failed to produce output file at {isolated_path}")
+
+        # Match audio properties and copy to final output path
         _match_audio_properties(isolated_path, output_path, progress_callback)
-    finally:
-        os.unlink(isolated_path)
