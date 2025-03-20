@@ -64,12 +64,10 @@ def get_config_path() -> Path:
 
 def get_app_paths() -> dict[str, Path]:
     """Get all application paths."""
-    from . import cache  # Import here to avoid circular imports
 
     return {
         "config_dir": Path(CONFIG_DIR),
         "config_file": Path(CONFIG_DIR) / CONFIG_FILE,
-        "cache_dir": cache.CACHE_DIR,
     }
 
 

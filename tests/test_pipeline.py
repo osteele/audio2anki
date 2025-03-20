@@ -136,88 +136,72 @@ def test_validate_pipeline() -> None:
         validate_pipeline(pipeline, initial_artifacts)
 
 
-def test_content_based_caching(tmp_path: Path) -> None:
-    """Test that the content-based caching works correctly."""
-    from audio2anki.cache import compute_file_hash, get_content_hash
+def test_temp_dir_cache(tmp_path: Path) -> None:
+    """Test that the temporary directory cache works correctly."""
+    from audio2anki.cache import TempDirCache
 
-    # Create test files with known content
-    file1 = tmp_path / "file1.txt"
-    file2 = tmp_path / "file2.txt"
-    file3 = tmp_path / "file3.txt"
+    # Create a test temporary cache
+    cache = TempDirCache(keep_files=True)
+    try:
+        # Test getting paths for different artifacts
+        audio_path = cache.get_path("audio", "mp3")
+        transcript_path = cache.get_path("transcript", "srt")
 
-    # File with content "test"
-    file1.write_text("test")
+        # Paths should be in the temp directory
+        assert str(cache.temp_dir) in str(audio_path)
+        assert str(cache.temp_dir) in str(transcript_path)
 
-    # File with different content
-    file2.write_text("different content")
+        # Paths should end with the correct names
+        assert str(audio_path).endswith("audio.mp3")
+        assert str(transcript_path).endswith("transcript.srt")
 
-    # Identical content to file1
-    file3.write_text("test")
+        # Test storing an artifact
+        test_data = b"test artifact data"
+        path = cache.store("test_artifact", test_data, "txt")
 
-    # Test single file hashing
-    hash1 = get_content_hash([file1])
-    hash2 = get_content_hash([file2])
-    hash3 = get_content_hash([file3])
-
-    # Check that identical content produces identical hashes
-    assert hash1 == hash3
-    # Check that different content produces different hashes
-    assert hash1 != hash2
-
-    # Test multiple file hashing
-    combined_hash1 = get_content_hash([file1, file2])
-    combined_hash2 = get_content_hash([file3, file2])
-
-    # Identical combinations should have identical hashes
-    assert combined_hash1 == combined_hash2
-
-    # Different combinations should have different hashes
-    combined_hash3 = get_content_hash([file1, file3])
-    assert combined_hash1 != combined_hash3
-
-    # Test that we're using the first 8 characters of the hash
-    full_hash = compute_file_hash(file1)
-    assert hash1 == full_hash[:16]
+        # Check file exists and has correct content
+        assert path.exists()
+        with open(path, "rb") as f:
+            assert f.read() == test_data
+    finally:
+        # Cleanup
+        cache.cleanup()
 
 
 def test_pipeline_cache_integration(mock_pipeline_progress: PipelineProgress, tmp_path: Path) -> None:
-    """Test the integration of content-based caching in the pipeline context."""
+    """Test the integration of the temp cache in the pipeline context."""
+    from audio2anki.cache import cleanup_cache, init_cache
     from audio2anki.pipeline import PipelineContext, pipeline_function
 
-    # Create a temporary input file
-    input_file = tmp_path / "input.txt"
-    input_file.write_text("test content for caching")
+    # Initialize a test cache
+    init_cache(keep_files=True)
+    try:
+        # Create a temporary input file
+        input_file = tmp_path / "input.txt"
+        input_file.write_text("test content for caching")
 
-    # Create a context
-    context = PipelineContext(progress=mock_pipeline_progress)
-    context.set_input_file(input_file)
+        # Create a context
+        context = PipelineContext(progress=mock_pipeline_progress)
+        context.set_input_file(input_file)
 
-    # Create a test pipeline function
-    @pipeline_function(test_artifact={"extension": "txt"})
-    def test_function(context: PipelineContext) -> None:
-        """Test function that produces a single artifact."""
-        pass
+        # Create a test pipeline function
+        @pipeline_function(test_artifact={"extension": "txt"})
+        def test_function(context: PipelineContext) -> None:
+            """Test function that produces a single artifact."""
+            pass
 
-    # Set up the context for this function
-    stage_context = context.for_stage(test_function)
+        # Set up the context for this function
+        stage_context = context.for_stage(test_function)
 
-    # Get the artifact path
-    artifact_path = stage_context.get_artifact_path("test_artifact")
+        # Get the artifact path
+        artifact_path = stage_context.get_artifact_path("test_artifact")
 
-    # The path should include the content hash
-    from audio2anki.cache import get_content_hash
-    from audio2anki.utils import sanitize_filename
-
-    # The hash should be based on the input file content
-    input_hash = get_content_hash([input_file])
-    sanitized_name = sanitize_filename(input_file.stem.lower())
-
-    # Check that the path includes the hash
-    assert input_hash in str(artifact_path)
-
-    # Check the overall pattern
-    expected_pattern = f"{sanitized_name}_test_artifact_{input_hash}"
-    assert expected_pattern in str(artifact_path)
+        # The path should be in the temp directory and have the correct name
+        assert "audio2anki_" in str(artifact_path)
+        assert str(artifact_path).endswith("test_artifact.txt")
+    finally:
+        # Clean up
+        cleanup_cache()
 
 
 def test_pipeline_runner_should_use_cache(pipeline_runner: PipelineRunner) -> None:
@@ -322,8 +306,12 @@ def test_pipeline_stages(test_audio_file: Path, tmp_path: Path) -> None:
     dummy_result_path = tmp_path / "deck"
     dummy_result_path.mkdir(exist_ok=True)
 
-    # Patch the cache directory to use our temporary directory
-    with patch("audio2anki.cache.CACHE_DIR", tmp_path):
+    # Create a mock cache for testing
+    with patch("audio2anki.cache.init_cache") as mock_init_cache:
+        # Set up a mock TempDirCache
+        mock_cache = Mock()
+        mock_cache.get_path.return_value = dummy_regular_file
+        mock_init_cache.return_value = mock_cache
         # Mock store_in_cache to prevent trying to cache a directory
         with patch.object(PipelineContext, "store_in_cache", return_value=None):
             # Add patch for the final get_artifact_path call in run()

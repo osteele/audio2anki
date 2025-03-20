@@ -18,8 +18,6 @@ from rich.progress import (
     TimeRemainingColumn,
 )
 
-from .utils import sanitize_filename
-
 T = TypeVar("T")
 
 
@@ -54,7 +52,7 @@ class PipelineOptions:
     """Options that control pipeline behavior."""
 
     bypass_cache: bool = False
-    clear_cache: bool = False
+    keep_cache: bool = False
     debug: bool = False
     source_language: str = "chinese"
     target_language: str | None = None
@@ -133,32 +131,6 @@ class PipelineContext:
         """Update the input file for an artifact."""
         self._stage_inputs[artifact_name] = input_path
 
-    def get_input_hash(self, artifact_name: str) -> str:
-        """
-        Get hash of input files for an artifact.
-
-        Args:
-            artifact_name: The name of the artifact for which to compute the hash
-
-        Returns:
-            An 8-character hash based on the content of input files
-
-        Raises:
-            ValueError: If no input files are found for this artifact
-        """
-        from . import cache
-
-        input_paths: list[Path] = []
-        for name, path in self._stage_inputs.items():
-            if name == artifact_name or name == "input_path":
-                input_paths.append(path)
-
-        if not input_paths:
-            raise ValueError(f"No input file set for artifact {artifact_name}")
-
-        # Compute content-based hash
-        return cache.get_content_hash(input_paths)
-
     def for_stage(self, pipeline_fn: PipelineFunctionType) -> "PipelineContext":
         """Create a stage-specific context."""
         # Get artifact definitions from the function
@@ -187,9 +159,6 @@ class PipelineContext:
         Returns:
             The path to the artifact file.
         """
-        if not self._input_file:
-            raise ValueError("Input file not set")
-
         if not self._current_fn:
             raise ValueError("No current pipeline function")
 
@@ -216,24 +185,12 @@ class PipelineContext:
         # Use cache to get the path
         from . import cache
 
-        # Create sanitized name from input file
-        sanitized_name = sanitize_filename(self._input_file.stem.lower())
-
-        # Compute the content-based hash from input files
-        input_hash = self.get_input_hash(artifact_name)
-
-        # Construct the cache key with the hash included
-        cache_key = f"{sanitized_name}_{artifact_name}_{input_hash}"
-
-        # Get the cache path
-        return Path(cache.get_cache_path(cache_key, f".{extension}"))
+        # Get the cache path using just the artifact name
+        return cache.get_artifact_path(artifact_name, extension)
 
     def retrieve_from_cache(self, artifact_name: str) -> Path | None:
         """
-        Check if an artifact is in cache and return its path if found.
-
-        The cache lookup is based on the content hash of input files, ensuring
-        that cache hits only happen when inputs are identical in content.
+        Check if an artifact exists in the temp directory and return its path if found.
 
         Args:
             artifact_name: The name of the artifact to retrieve
@@ -241,39 +198,19 @@ class PipelineContext:
         Returns:
             Path to the cached artifact if found, None otherwise
         """
-        if not self._input_file:
-            raise ValueError("Input file not set")
-
         # Skip cache for terminal artifacts
         if self._artifacts[artifact_name].get("terminal", False):
             return None
 
-        # Get input paths for this artifact
-        input_paths: list[Path] = []
-        for name, path in self._stage_inputs.items():
-            if name == artifact_name or name == "input_path":
-                input_paths.append(path)
-
-        # Skip cache retrieval if there's nothing to compute hash from
-        if not input_paths:
-            return None
-
         from . import cache
 
-        # Create sanitized name from input file
-        sanitized_name = sanitize_filename(self._input_file.stem.lower())
-
-        # Compute content-based hash
-        input_hash = cache.get_content_hash(input_paths)
-
-        # Construct cache key with the hash
+        # Get extension from the artifact definition
         extension = self._artifacts[artifact_name].get("extension", "mp3")
-        cache_key = f"{sanitized_name}_{artifact_name}_{input_hash}"
 
         # Get the cache path
-        cache_path = Path(cache.get_cache_path(cache_key, f".{extension}"))
+        cache_path = cache.get_artifact_path(artifact_name, extension)
 
-        # Check if the cached file exists
+        # Check if the file exists
         if cache_path.exists():
             return cache_path
 
@@ -283,17 +220,11 @@ class PipelineContext:
         """
         Store an artifact in the cache.
 
-        Uses content-based hashing to create a cache key that uniquely identifies
-        this artifact based on its input content.
-
         Args:
             artifact_name: The name of the artifact to store
             output_path: Path to the artifact file to store
             input_path: Unused, kept for API compatibility
         """
-        if not self._input_file:
-            raise ValueError("Input file not set")
-
         # Skip cache for terminal artifacts
         if self._artifacts[artifact_name].get("terminal", False):
             return
@@ -303,32 +234,19 @@ class PipelineContext:
             logging.warning(f"Cannot cache non-existent file: {output_path}")
             return
 
-        # Get input paths for this artifact
-        input_paths: list[Path] = []
-        for name, path in self._stage_inputs.items():
-            if name == artifact_name or name == "input_path":
-                input_paths.append(path)
-
-        # Skip caching if there's nothing to compute hash from
-        if not input_paths:
-            logging.warning(f"No input paths for artifact {artifact_name}, skipping cache")
-            return
-
         from . import cache
 
-        # Create sanitized name from input file
-        sanitized_name = sanitize_filename(self._input_file.stem.lower())
-
-        # Compute content-based hash
-        input_hash = cache.get_content_hash(input_paths)
-
-        # Construct cache key with the hash
+        # Get extension from the artifact definition
         extension = self._artifacts[artifact_name].get("extension", "mp3")
-        cache_key = f"{sanitized_name}_{artifact_name}_{input_hash}"
+
+        # If the output path is already in the cache directory, no need to store again
+        cache_path = cache.get_artifact_path(artifact_name, extension)
+        if output_path.samefile(cache_path):
+            return
 
         # Read and store the file data
         with open(output_path, "rb") as f:
-            cache.cache_store(cache_key, f.read(), f".{extension}")
+            cache.store_artifact(artifact_name, f.read(), extension)
 
     @property
     def stage_task_id(self) -> TaskID | None:
@@ -564,19 +482,25 @@ def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -
     Returns:
         Path: The path to the generated deck directory
     """
-    if options.clear_cache:
-        from . import cache
+    from . import cache
 
-        cache.clear_cache()
-        logging.info("Cache cleared")
+    # Initialize a new temporary cache with keep_files option
+    cache.init_cache(keep_files=options.keep_cache)
+    logging.info("Initialized temporary cache")
 
-    with PipelineProgress.create(console) as progress:
-        # Create pipeline runner
-        runner = PipelineRunner.create(input_file, console, options)
-        runner.context.progress = progress
+    try:
+        with PipelineProgress.create(console) as progress:
+            # Create pipeline runner
+            runner = PipelineRunner.create(input_file, console, options)
+            runner.context.progress = progress
 
-        # Run the pipeline
-        return runner.run()
+            # Run the pipeline
+            result = runner.run()
+            return result
+    finally:
+        # Clean up cache unless keep_cache is True
+        if not options.keep_cache:
+            cache.cleanup_cache()
 
 
 @pipeline_function(transcode={"extension": "mp3"})

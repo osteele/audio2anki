@@ -24,12 +24,12 @@ The plan is split into manageable steps so that each can be developed, tested, a
   - Displays progress throughout the pipeline execution.
   - Provides CLI flags to override the stages list (default order is sufficient for now).
 
-## Step 2: Implement the Central Caching Mechanism
+## Step 2: Implement the Temporary Caching Mechanism
 
 - Develop a caching module (e.g., `src/audio2anki/cache.py`) that:
-  - Creates and manages the cache directory at `$HOME/.cache/audio2anki`.
-  - Supports storing and retrieving intermediate results using simple keys (e.g., a hash of the input file).
-  - Implements commands (later integrated with the CLI) to report cache location and size, expire old entries, and optionally disable caching.
+  - Creates a temporary directory for each pipeline run using `tempfile.mkdtemp()`.
+  - Supports storing and retrieving artifacts by their simple names within this temporary directory.
+  - Automatically cleans up the temporary directory after processing is complete, with an option to keep it for debugging.
 
 ## Step 3: Set Up the Configuration Module
 
@@ -37,7 +37,7 @@ The plan is split into manageable steps so that each can be developed, tested, a
   - Reads a TOML file at `$HOME/.config/audio2anki/config.toml` and applies defaults if missing.
   - Stores settings such as:
     - File cleaning defaults
-    - Cache usage and expiry durations
+    - Cache usage defaults
     - Provider selections (preselect Eleven Labs for voice isolation and OpenAI Whisper for transcription)
   - Offers CLI commands or a separate module to show and edit the configuration.
 
@@ -79,7 +79,7 @@ For each stage, create separate modules or classes so that each can be developed
 ## Step 5: Integrate and Test End-to-End Processing
 
 - In `main.py`, wire up the pipeline so that each stage feeds its output to the next, skipping the audio slicing stage for short files:
-  - Ensure intermediate results are cached where applicable.
+  - Store intermediate results in the temporary directory.
   - Implement basic CLI commands to process a sample short file.
 - Add integration tests (e.g., within the tests directory) that run an end-to-end scenario for a short file, ensuring a complete deck is generated correctly.
 

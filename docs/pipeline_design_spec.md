@@ -75,20 +75,18 @@ If a function is not decorated with `@produces_artifacts`, it produces a single 
        """Validate that all required artifacts will be available."""
    ```
 
-### Artifact Naming and Caching
+### Artifact Naming and Temporary Caching
 
 - Each artifact has a unique name, either:
   - Specified in the `@pipeline_function` decorator, or
   - Defaulting to the function name if not decorated
 - Each pipeline stage specifies the names of its input artifacts through parameter names (other than `context`)
-- The artifact filename has the format `{sanitized_input_name}_{artifact_name}_{hash}.{extension}`, where:
-  - `sanitized_input_name` is derived from the original input file to the pipeline
+- For each pipeline run, a temporary directory is created to store all artifacts
+- The artifact filename has the simple format `{artifact_name}.{extension}`, where:
   - `artifact_name` is the name of the artifact produced by the pipeline stage
-  - `hash` is derived from the inputs to the pipeline stage:
-    - If the pipeline stage has a single input artifact, hash is the first eight characters of the md5 hash of the input content
-    - If the pipeline stage has multiple input artifacts, the full md5 hashes of all input contents are concatenated and hashed again, with the first eight characters used
 - Each pipeline function can produce one or more artifacts
 - Artifacts are referenced by name in subsequent pipeline stages' parameters
+- The temporary directory is automatically cleaned up after the pipeline completes, unless the `keep_cache` option is specified
 
 ### Example Pipeline
 
@@ -112,16 +110,15 @@ def transcribe(context: PipelineContext, voice_only: Path) -> None:
 
 ### Caching Behavior
 
-- Artifacts are cached based on their unique names and content-based hashes
-- The hash is computed from the content of the input artifacts, not just their names
-- If a cached artifact exists with the matching hash, the stage is skipped
+- Artifacts are stored in a temporary directory created for each pipeline run
+- Each artifact is stored with a simple filename based on the artifact name
+- The temporary directory is deleted after the pipeline completes unless the `keep_cache` option is set
 - Processing modules don't handle caching; they always process their inputs
-- Intermediate files within a stage should use temporary files
+- Intermediate files within a stage should use the temporary directory
 - Cache lookup strategy:
-  1. Compute hash from input artifact content
-  2. Look for artifact with the filename pattern `{sanitized_input_name}_{artifact_name}_{hash}.{extension}`
-  3. If found, use the cached artifact instead of reprocessing
-  4. If not found, process the stage and cache the result with the hash-based filename
+  1. Check if the artifact already exists in the temporary directory
+  2. If found, use the existing artifact instead of reprocessing
+  3. If not found, process the stage and store the result in the temporary directory
 
 ## Detailed Operations
 

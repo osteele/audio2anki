@@ -1,30 +1,12 @@
-"""Tests for the cache module."""
+"""Tests for the temporary cache module."""
 
 import os
 import tempfile
-import time
 from collections.abc import Generator
-from pathlib import Path
-from typing import Any, TypeAlias
 
 import pytest
-from pytest import MonkeyPatch
 
-# Define what we expect CacheTestEnv to be without importing it
-# This matches what's defined in conftest.py
-from audio2anki.cache import (
-    CACHE_DIR,
-    Cache,
-    cache_retrieve,
-    cache_store,
-    clear_cache,
-    compute_file_hash,
-    get_cache_path,
-    init_cache,
-)
-
-# Define a local type alias for CacheTestEnv
-TestEnv: TypeAlias = dict[str, Path]
+from audio2anki.cache import TempDirCache, cleanup_cache, get_artifact_path, init_cache, store_artifact
 
 
 @pytest.fixture
@@ -38,159 +20,96 @@ def temp_input_file() -> Generator[str, None, None]:
 
 
 @pytest.fixture
-def setup_cache() -> Generator[Path, None, None]:
-    """Set up and tear down the cache for each test."""
-    init_cache()
-    yield Path(CACHE_DIR)
-    clear_cache()
+def temp_cache() -> Generator[TempDirCache, None, None]:
+    """Create a temporary cache for testing."""
+    cache = TempDirCache(keep_files=True)  # Keep files for testing
+    yield cache
+    cache.cleanup()
 
 
-def test_compute_file_hash(temp_input_file: str) -> None:
-    """Test that file hashing is consistent."""
-    hash1 = compute_file_hash(temp_input_file)
-    hash2 = compute_file_hash(temp_input_file)
-    assert hash1 == hash2
-    assert isinstance(hash1, str)
-    assert len(hash1) == 32
+def test_temp_dir_creation(temp_cache: TempDirCache) -> None:
+    """Test that the temporary directory is created."""
+    assert temp_cache.temp_dir.exists()
+    assert temp_cache.temp_dir.is_dir()
+    assert "audio2anki_" in str(temp_cache.temp_dir)
 
 
-def test_init_cache(setup_cache: Path) -> None:
-    """Test cache initialization."""
-    cache_dir: Path = setup_cache
-    assert cache_dir.exists()
-    assert (cache_dir / "cache.db").exists()
+def test_get_path(temp_cache: TempDirCache) -> None:
+    """Test getting artifact paths."""
+    path = temp_cache.get_path("transcript", "srt")
+    assert str(path).endswith("transcript.srt")
+    assert str(temp_cache.temp_dir) in str(path)
+
+    # Test with extension that already has a leading dot
+    path = temp_cache.get_path("audio", ".mp3")
+    assert str(path).endswith("audio.mp3")
 
 
-def test_get_cache_path() -> None:
-    """Test cache path generation."""
-    path = get_cache_path("test_stage_abc123", ".mp3")
-    assert str(path).endswith("test_stage_abc123.mp3")
-    assert "audio2anki" in str(path)
+def test_store_artifact(temp_cache: TempDirCache) -> None:
+    """Test storing an artifact in the cache."""
+    test_data = b"test artifact data"
+    path = temp_cache.store("audio", test_data, "mp3")
+
+    # Check file exists and has correct content
+    assert path.exists()
+    with open(path, "rb") as f:
+        assert f.read() == test_data
 
 
-def test_cache_store_and_retrieve(temp_input_file: str, setup_cache: Path) -> None:
-    """Test storing and retrieving data from cache."""
-    test_data = b"test data"
-    cache_key = "test_stage_hash123"  # Key includes the hash
-    extension = ".txt"
+def test_cleanup(temp_cache: TempDirCache) -> None:
+    """Test cleanup with keep_files=False."""
+    temp_dir = temp_cache.temp_dir
 
-    # Store data
-    cache_path = Path(cache_store(cache_key, test_data, extension))
-    assert cache_path.exists()
+    # Override keep_files to False for this test
+    temp_cache.keep_files = False
 
-    # Retrieve data
-    hit = cache_retrieve(cache_key, extension)
-    assert hit
+    # Store an artifact
+    temp_cache.store("audio", b"test data", "mp3")
 
+    # Verify directory exists
+    assert temp_dir.exists()
 
-def test_cache_expiry(temp_input_file: str, setup_cache: Path, monkeypatch: MonkeyPatch) -> None:
-    """Test cache expiry functionality."""
-    test_data = b"test data"
-    cache_key = "test_stage_hash123"  # Key includes the hash
-    extension = ".txt"
+    # Clean up
+    temp_cache.cleanup()
 
-    # Store data
-    cache_path = Path(cache_store(cache_key, test_data, extension))
-
-    # Mock time to simulate passage of time
-    future_time = time.time() + 8 * 24 * 60 * 60  # 8 days in the future
-    monkeypatch.setattr(time, "time", lambda: future_time)
-
-    # Data should be expired after 7 days - but we don't have expiry in the current implementation
-
-    # Use different extra parameters to force miss
-    hit = cache_retrieve(cache_key, extension, extra_params={"version": 2})
-    assert not hit
-    assert cache_path.exists()  # File still exists since we don't have expiry
+    # Verify directory is removed
+    assert not temp_dir.exists()
 
 
-def test_cache_with_extra_params(temp_input_file: str, setup_cache: Path) -> None:
-    """Test cache behavior with extra parameters."""
-    test_data = b"test data"
-    cache_key = "test_stage_hash123"  # Key includes the hash
-    extension = ".txt"
-    params1: dict[str, Any] = {"param1": "value1"}
-    params2: dict[str, Any] = {"param1": "value2"}
+def test_keep_files(temp_cache: TempDirCache) -> None:
+    """Test that files are kept when keep_files=True."""
+    # Store an artifact
+    temp_cache.store("audio", b"test data", "mp3")
 
-    # Store with params1
-    cache_store(cache_key, test_data, extension, extra_params=params1)
+    # Clean up with keep_files=True (default for this fixture)
+    temp_cache.cleanup()
 
-    # Retrieve with different params should return False
-    hit = cache_retrieve(cache_key, extension, extra_params=params2)
-    assert not hit
+    # Verify directory still exists
+    assert temp_cache.temp_dir.exists()
 
-    # Retrieve with same params should return True
-    hit = cache_retrieve(cache_key, extension, extra_params=params1)
-    assert hit
+    # Manually clean up for the test
+    if temp_cache.temp_dir.exists():
+        import shutil
+
+        shutil.rmtree(temp_cache.temp_dir)
 
 
-def test_cache_delete(temp_input_file: str, setup_cache: Path) -> None:
-    """Test cache deletion."""
-    test_data = b"test data"
-    cache_key = "test_stage_hash123"  # Key includes the hash
-    extension = ".txt"
+def test_global_functions() -> None:
+    """Test the global cache functions."""
+    # Initialize a new cache
+    init_cache(keep_files=True)
+    try:
+        # Get path for an artifact
+        path = get_artifact_path("audio", "mp3")
+        assert str(path).endswith("audio.mp3")
 
-    # Store data
-    cache_path = Path(cache_store(cache_key, test_data, extension))
-    assert cache_path.exists()
+        # Store an artifact
+        stored_path = store_artifact("audio", b"test global data", "mp3")
+        assert stored_path.exists()
 
-    # Delete cache
-    cache_path.unlink()
-    assert not cache_path.exists()
-
-    # Retrieve should return False
-    hit = cache_retrieve(cache_key, extension)
-    assert not hit
-
-
-def test_clear_cache(temp_input_file: str, setup_cache: Path) -> None:
-    """Test clearing the entire cache."""
-    test_data = b"test data"
-    cache_key = "test_stage_hash123"  # Key includes the hash
-    extension = ".txt"
-
-    # Store some data
-    cache_path = Path(cache_store(cache_key, test_data, extension))
-    assert cache_path.exists()
-
-    # Clear cache
-    clear_cache()
-
-    # Cache should be empty
-    hit = cache_retrieve(cache_key, extension)
-    assert not hit
-    assert not cache_path.exists()
-
-
-@pytest.fixture
-def cache(test_env: TestEnv) -> Cache:
-    """Create a test cache instance."""
-    # Import cache after environment is set up
-    from audio2anki.cache import FileCache
-
-    # Get the cache_dir path
-    cache_dir_path = test_env["cache_dir"]
-    return FileCache(cache_dir_path=cache_dir_path)
-
-
-def test_file_cache(test_env: TestEnv, tmp_path: Path) -> None:
-    """Test FileCache operations."""
-    from audio2anki.cache import FileCache
-
-    # Create a test file
-    test_file = tmp_path / "test.txt"
-    test_file.write_text("test content")
-
-    # Initialize cache with test directory
-    cache_dir_path = test_env["cache_dir"]
-    cache = FileCache(cache_dir_path=cache_dir_path)
-
-    # Test cache operations
-    cache_key = "test_hash123"  # Key includes content hash
-    assert not cache.retrieve(cache_key, ".processed")
-
-    # Store something in cache
-    cache.store(cache_key, b"processed content", ".processed")
-
-    # Should now find it in cache
-    assert cache.retrieve(cache_key, ".processed")
+        # Verify content
+        with open(stored_path, "rb") as f:
+            assert f.read() == b"test global data"
+    finally:
+        # Clean up
+        cleanup_cache()

@@ -9,7 +9,6 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.table import Table
 
-from .cache import clear_cache, get_cache_info, open_cache_directory
 from .config import edit_config, load_config, reset_config, set_config_value
 from .pipeline import PipelineOptions, run_pipeline
 
@@ -62,14 +61,14 @@ def cli():
 @click.argument("input_file", type=click.Path(exists=True))
 @click.option("--debug", is_flag=True, help="Enable debug logging")
 @click.option("--bypass-cache", is_flag=True, help="Skip cache lookup and force reprocessing")
-@click.option("--clear-cache", "should_clear_cache", is_flag=True, help="Clear the cache before processing")
+@click.option("--keep-cache", is_flag=True, help="Keep temporary cache directory after processing (for debugging)")
 @click.option("--target-language", help="Target language for translation")
 @click.option("--source-language", default="chinese", help="Source language for transcription")
 def process(
     input_file: str,
     debug: bool = False,
     bypass_cache: bool = False,
-    should_clear_cache: bool = False,
+    keep_cache: bool = False,
     target_language: str | None = None,
     source_language: str = "chinese",
 ) -> None:
@@ -79,14 +78,11 @@ def process(
     if not target_language:
         target_language = get_system_language()
 
-    if should_clear_cache:
-        clear_cache()
-
     options = PipelineOptions(
         target_language=target_language,
         source_language=source_language,
         bypass_cache=bypass_cache,
-        clear_cache=should_clear_cache,
+        keep_cache=keep_cache,
         debug=debug,
     )
     deck_dir = str(run_pipeline(Path(input_file), console, options))
@@ -172,60 +168,20 @@ def reset():
             raise click.ClickException(message)
 
 
-@cli.group()
-def cache():
-    """Manage application cache."""
-    pass
-
-
-@cache.command()
-def open():
-    """Open cache directory in system file explorer."""
-    success, message = open_cache_directory()
-    if success:
-        console.print(f"[green]{message}[/]")
-    else:
-        console.print(f"[red]Error: {message}[/]")
-        raise click.ClickException(message)
-
-
-@cache.command()
-def clear():
-    """Clear all cached data."""
-    if click.confirm("Are you sure you want to clear all cached data?"):
-        clear_cache()
-        console.print("[green]Cache cleared successfully[/]")
-
-
-@cache.command()
-def info():
-    """Display information about the cache."""
-    cache_info = get_cache_info()
-
-    table = Table(title="Cache Information")
-    table.add_column("Metric", style="cyan")
-    table.add_column("Value", style="green")
-
-    size_mb = cache_info["size"] / (1024 * 1024)
-    table.add_row("Size", f"{size_mb:.2f} MB")
-    table.add_row("Files", str(cache_info["file_count"]))
-    if cache_info["last_modified"]:
-        table.add_row("Last Modified", cache_info["last_modified"].strftime("%Y-%m-%d %H:%M:%S"))
-    else:
-        table.add_row("Last Modified", "Never")
-
-    console.print(table)
+# Cache-related commands have been removed as we now use a temporary directory for each run
 
 
 @cli.command()
 def paths() -> None:
-    """Show locations of configuration and cache files."""
+    """Show locations of configuration files."""
     configure_logging()
     from . import config
 
     paths = config.get_app_paths()
     console.print("\n[bold]Application Paths:[/]")
     for name, path in paths.items():
+        if name == "cache_dir":
+            continue  # Skip cache_dir since we now use temp directories
         exists = path.exists()
         status = "[green]exists[/]" if exists else "[yellow]not created yet[/]"
         console.print(f"  [cyan]{name}[/]: {path} ({status})")
