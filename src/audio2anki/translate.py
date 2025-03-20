@@ -15,7 +15,7 @@ from .transcribe import TranscriptionSegment, load_transcript, save_transcript
 def get_pinyin(text: str, client: OpenAI) -> str:
     """Get Pinyin for Chinese text using OpenAI."""
     response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
+        model="gpt-4o-mini",
         messages=[
             {
                 "role": "system",
@@ -46,7 +46,7 @@ def get_pinyin(text: str, client: OpenAI) -> str:
 def get_hiragana(text: str, client: OpenAI) -> str:
     """Get hiragana for Japanese text using OpenAI."""
     response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
+        model="gpt-4o-mini",
         messages=[
             {
                 "role": "system",
@@ -93,7 +93,7 @@ def translate_with_openai(
         Tuple of (translation, reading). Reading is pinyin for Chinese or hiragana for Japanese.
     """
     response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
+        model="gpt-4o-mini",
         messages=[
             {
                 "role": "system",
