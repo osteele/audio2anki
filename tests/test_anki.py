@@ -211,3 +211,133 @@ def test_generate_anki_deck(
             assert fields2[3].startswith("[sound:")
     finally:
         os.chdir(old_cwd)
+
+
+def test_generate_anki_deck_with_output_folder(
+    tmp_path: Path,
+    mock_pipeline_progress: PipelineProgress,
+) -> None:
+    """Test deck generation with output folder specified."""
+    # Use predefined paths instead of calculating them, since determination logic is now in main.py
+
+    # Create test files
+    transcript_file = tmp_path / "transcript.srt"
+    with open(transcript_file, "w") as f:
+        f.write("1\n00:00:00,000 --> 00:00:02,000\n你好\n\n")
+
+    translation_file = tmp_path / "translation.srt"
+    with open(translation_file, "w") as f:
+        f.write("1\n00:00:00,000 --> 00:00:02,000\nHello\n\n")
+
+    # Create test audio file
+    from pydub import AudioSegment as PydubSegment
+
+    audio = PydubSegment.silent(duration=2000)  # 2 seconds of silence
+    audio_file = tmp_path / "chinese_lesson.mp3"
+    audio.export(str(audio_file), format="mp3")
+
+    # Change to tmp_path as working directory
+    import os
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+
+    try:
+        # Test with custom output folder
+        custom_folder = "my_custom_folder"
+
+        # Just use a direct path for the test
+        tmp_path / custom_folder
+
+        # Now test the full generation function
+        deck_dir = generate_anki_deck(
+            translation_file,
+            mock_pipeline_progress,
+            transcription_file=transcript_file,
+            source_language="chinese",
+            target_language="english",
+            input_audio_file=audio_file,
+            output_folder=custom_folder,
+        )
+
+        # Check that the deck was created with the correct name structure
+        # Different OS paths might be handled differently, focus on the directory name
+        assert deck_dir.name == custom_folder
+        assert deck_dir.exists()
+        assert (deck_dir / "deck.txt").exists()
+
+        # Test with derived folder name
+        # Since we're not calculating paths in anki.py anymore, we need to explicitly
+        # set the output path to what would be derived normally
+        derived_path = f"decks/{audio_file.stem}"
+
+        derived_deck_dir = generate_anki_deck(
+            translation_file,
+            mock_pipeline_progress,
+            transcription_file=transcript_file,
+            source_language="chinese",
+            target_language="english",
+            input_audio_file=audio_file,
+            output_folder=derived_path,
+        )
+
+        # Check that the directory structure is correct
+        assert "decks" in str(derived_deck_dir)
+        assert "chinese_lesson" in str(derived_deck_dir)
+        assert derived_deck_dir.exists()
+        assert (derived_deck_dir / "deck.txt").exists()
+
+        # Test with existing non-deck folder - in real usage, main.py would detect this case
+        # and create a nested folder. Since we're testing anki.py directly, we simulate
+        # this by passing the correct nested path
+        existing_folder = tmp_path / "existing_folder"
+        existing_folder.mkdir()
+        (existing_folder / "some_file.txt").write_text("test")
+
+        # This is the path that would be calculated by determine_output_path in main.py
+        nested_path = f"existing_folder/{audio_file.stem}"
+
+        existing_folder_deck_dir = generate_anki_deck(
+            translation_file,
+            mock_pipeline_progress,
+            transcription_file=transcript_file,
+            source_language="chinese",
+            target_language="english",
+            input_audio_file=audio_file,
+            output_folder=nested_path,
+        )
+
+        # Check that the directory structure is correct - we're using the nested path directly now
+        assert "existing_folder" in str(existing_folder_deck_dir)
+        assert audio_file.stem in str(existing_folder_deck_dir)
+        assert existing_folder_deck_dir.exists()
+        assert (existing_folder_deck_dir / "deck.txt").exists()
+
+        # Test with existing deck folder (should replace)
+        # In real usage, main.py would recognize this as an existing deck folder
+        deck_folder_name = "deck_folder"
+        deck_folder = tmp_path / deck_folder_name
+        deck_folder.mkdir()
+        (deck_folder / "deck.txt").write_text("old content")
+        (deck_folder / "media").mkdir()
+
+        replaced_deck_dir = generate_anki_deck(
+            translation_file,
+            mock_pipeline_progress,
+            transcription_file=transcript_file,
+            source_language="chinese",
+            target_language="english",
+            input_audio_file=audio_file,
+            output_folder="deck_folder",
+        )
+
+        # Check that we're using the existing deck folder
+        assert deck_folder.name in str(replaced_deck_dir)
+        assert replaced_deck_dir.exists()
+
+        # Verify content was replaced
+        with open(replaced_deck_dir / "deck.txt") as f:
+            content = f.read()
+            assert "你好" in content  # New content
+    finally:
+        os.chdir(old_cwd)

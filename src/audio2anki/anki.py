@@ -107,8 +107,9 @@ def create_anki_deck(
     Returns:
         Path to the created deck directory
     """
-    # Create deck directory structure
-    deck_dir = output_dir / "deck"
+    # Use the provided output_dir directly (already processed for output folder options)
+    # Just ensure directory exists and create media folder
+    deck_dir = output_dir
     deck_dir.mkdir(parents=True, exist_ok=True)
     media_dir = deck_dir / "media"
     media_dir.mkdir(exist_ok=True)
@@ -232,10 +233,38 @@ def generate_anki_deck(
         raise TypeError("Expected PipelineProgress object")
 
     input_path = Path(input_data)
+    kwargs.get("input_audio_file")
+    kwargs.get("output_folder")
 
-    # Use the output_path from kwargs if provided, otherwise use current directory
-    output_path = kwargs.get("output_path")
-    deck_dir = Path.cwd() if output_path is None else Path(output_path)
+    # Get the output path from kwargs
+    deck_dir = kwargs.get("output_folder")
+    if deck_dir is None:
+        # Fallback to cwd if no output folder was specified
+        deck_dir = Path.cwd()
+    elif isinstance(deck_dir, str):
+        # Convert string to Path
+        deck_dir = Path(deck_dir)
+
+    # Determine if this is a deck folder that needs to be replaced
+    is_deck_folder = False
+    if deck_dir.exists():
+        deck_csv = deck_dir / "deck.csv"
+        deck_txt = deck_dir / "deck.txt"
+        media_dir = deck_dir / "media"
+        is_deck_folder = (deck_csv.exists() or deck_txt.exists()) and media_dir.exists()
+
+        # If it's a deck folder, clean up any existing files
+        if is_deck_folder:
+            import shutil
+
+            for item in deck_dir.glob("*"):
+                if item.is_file():
+                    item.unlink()
+                elif item.is_dir() and item.name != "anki_media":  # Keep the anki_media symlink
+                    shutil.rmtree(item)
+
+    # Create directory if it doesn't exist
+    deck_dir.mkdir(parents=True, exist_ok=True)
 
     # Load segments from the translation file
     translation_segments = load_transcript(input_path)

@@ -56,6 +56,7 @@ class PipelineOptions:
     debug: bool = False
     source_language: str = "chinese"
     target_language: str | None = None
+    output_folder: Path | None = None
 
 
 @dataclass
@@ -136,6 +137,7 @@ class PipelineContext:
     progress: PipelineProgress
     source_language: str = "chinese"
     target_language: str | None = None
+    output_folder: Path | None = None
     _current_fn: PipelineFunction | None = None
     _input_file: Path | None = None
     _stage_inputs: dict[str, Path] = field(default_factory=dict)
@@ -323,6 +325,7 @@ class PipelineRunner:
             progress=progress,
             source_language=options.source_language,
             target_language=options.target_language,
+            output_folder=options.output_folder,
         )
         context.set_input_file(input_file)
 
@@ -622,9 +625,8 @@ def generate_deck(
     """Generate an Anki flashcard deck from the processed data."""
     from .anki import generate_anki_deck
 
-    # For the output deck, use the current working directory directly
-    # The create_anki_deck function will append "/deck" to this path
-    output_path = Path.cwd()
+    # Use the output folder from context if provided, otherwise use cwd
+    output_path = context.output_folder if context.output_folder else Path.cwd()
 
     # Generate the Anki deck
     deck_dir = generate_anki_deck(
@@ -636,7 +638,7 @@ def generate_deck(
         target_language=context.target_language,
         task_id=context.stage_task_id,
         progress=context.progress,
-        output_path=output_path,
+        output_folder=output_path,
     )
 
     # Store the actual deck path in the artifacts dictionary for the PipelineRunner to use

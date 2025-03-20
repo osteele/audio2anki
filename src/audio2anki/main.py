@@ -68,6 +68,46 @@ class LeftAlignedMarkdown(Markdown):
         return text
 
 
+def determine_output_path(base_path: Path, output_folder: str | None, input_file: Path) -> Path:
+    """Determine the output path for the Anki deck based on provided options.
+
+    Args:
+        base_path: Base path for the output (typically current directory)
+        output_folder: CLI-specified output folder or None
+        input_file: Input audio/video file path
+
+    Returns:
+        Path: The determined output directory path (does not create directories)
+    """
+    # If no output_folder is specified, derive it from input file name
+    if output_folder is None:
+        input_filename = input_file.stem
+        output_folder = f"decks/{input_filename}"
+
+    if output_folder:
+        full_output_path = base_path / output_folder
+
+        # Check if output folder exists and is a deck folder
+        is_deck_folder = False
+        if full_output_path.exists():
+            deck_csv = full_output_path / "deck.csv"
+            deck_txt = full_output_path / "deck.txt"
+            media_dir = full_output_path / "media"
+            is_deck_folder = (deck_csv.exists() or deck_txt.exists()) and media_dir.exists()
+
+        if not full_output_path.exists() or is_deck_folder:
+            # Either a new directory or an existing deck folder to replace
+            return full_output_path
+        else:
+            # For an existing non-deck folder, use nested path with name derived from input file
+            derived_name = input_file.stem
+            nested_path = full_output_path / derived_name
+            return nested_path
+    else:
+        # Default fallback to base_path
+        return base_path
+
+
 @click.group()
 def cli():
     """Audio2Anki - Generate Anki cards from audio files."""
@@ -81,6 +121,7 @@ def cli():
 @click.option("--keep-cache", is_flag=True, help="Keep temporary cache directory after processing (for debugging)")
 @click.option("--target-language", help="Target language for translation")
 @click.option("--source-language", default="chinese", help="Source language for transcription")
+@click.option("--output-folder", help="Specify the output folder for the deck")
 def process(
     input_file: str,
     debug: bool = False,
@@ -88,6 +129,7 @@ def process(
     keep_cache: bool = False,
     target_language: str | None = None,
     source_language: str = "chinese",
+    output_folder: str | None = None,
 ) -> None:
     """Process an audio/video file and generate Anki flashcards."""
     configure_logging(debug)
@@ -95,12 +137,19 @@ def process(
     if not target_language:
         target_language = get_system_language()
 
+    # Determine output path
+    input_file_path = Path(input_file)
+    resolved_output_path = determine_output_path(
+        base_path=Path.cwd(), output_folder=output_folder, input_file=input_file_path
+    )
+
     options = PipelineOptions(
         target_language=target_language,
         source_language=source_language,
         bypass_cache=bypass_cache,
         keep_cache=keep_cache,
         debug=debug,
+        output_folder=resolved_output_path,
     )
     deck_dir = str(run_pipeline(Path(input_file), console, options))
 
