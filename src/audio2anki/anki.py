@@ -13,6 +13,63 @@ from .audio_utils import split_audio
 from .models import AudioSegment
 from .pipeline import PipelineProgress
 
+# Template for the README.md file
+README_TEMPLATE = r"""# Anki Deck Import Instructions
+
+This export package contains:
+- `deck.csv`: A CSV file with Chinese text, pinyin, English translation, and audio references
+- `deck.txt`: A tab-separated file with the same content for manual import
+- Audio files in the `media` folder (named with content hashes to avoid conflicts)
+- `import_to_anki.sh`: A shell script to help with importing into Anki
+
+## Import Options
+
+### Option 1: Using the Shell Script (Recommended)
+1. Unzip this file to a location on your computer
+2. Open Terminal
+3. Navigate to the unzipped directory
+4. Run the script: `./import_to_anki.sh`
+
+The script will:
+- Install `uv` if it's not already present (via https://docs.astral.sh/uv/getting-started/installation/)
+- Launch Anki if it's not already running
+- Import the cards directly into your selected deck using the `add2anki` tool
+
+### Option 2: Manual Installation with uv
+1. Install `uv` from https://docs.astral.sh/uv/getting-started/installation/
+2. Run: `uv tool git+https://github.com/osteele/add2anki@release deck.csv --tags audio2anki`
+
+### Option 3: Manual Import
+1. Open Anki
+2. Click "File" > "Import"
+3. Select the `deck.txt` file in this directory
+4. In the import dialog:
+    - Set "Type" to "Basic"
+    - Set "Deck" to your desired deck name
+    - Set "Fields separated by" to "Tab"
+5. Import the audio files:
+    - Copy all files from the `media` folder
+    - Paste them into your Anki media folder: `{media_path}`
+
+## Finding Your Anki Media Folder
+
+The Anki media folder is typically located at:
+
+- **macOS**: `~/Library/Application Support/Anki2/[profile]/collection.media`
+- **Windows**: `C:\\Users\\[username]\\AppData\\Roaming\\Anki2\\[profile]\\collection.media`
+- **Linux**: `~/.local/share/Anki2/[profile]/collection.media`
+
+Where `[profile]` is usually `User 1` if you haven't created additional profiles.
+
+You can also find it from Anki by going to:
+1. Tools > Add-ons > Open Add-ons Folder
+2. Go up one directory level
+3. Navigate to your profile folder, then to `collection.media`
+
+Note: The media files are named with a hash of the source audio to avoid conflicts.
+{alias_note}
+"""
+
 
 def get_anki_media_dir() -> Path:
     """Get the Anki media directory for the current platform."""
@@ -90,30 +147,43 @@ def create_anki_deck(
             if progress and task_id:
                 progress.update(task_id, advance=1)
 
-    # Update README content with OS-specific media path and alias terminology
-    media_path = get_anki_media_dir()
-    import platform
+    # Create deck.csv file
+    csv_file = deck_dir / "deck.csv"
+    with open(csv_file, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        # CSV header based on language
+        if source_language == "chinese":
+            writer.writerow(["Hanzi", "Pinyin", "English", "Audio"])
+        elif source_language == "japanese":
+            writer.writerow(["Japanese", "Pronunciation", "English", "Audio"])
+        else:
+            writer.writerow(["Text", "Pronunciation", "English", "Audio"])
 
+        # Write segments to CSV
+        for segment in segments:
+            audio_path = f"media/{segment.audio_file}" if segment.audio_file else ""
+            writer.writerow([segment.text, segment.pronunciation or "", segment.translation or "", audio_path])
+
+    # Copy the import_to_anki.sh script to the deck directory
+    script_path = Path(__file__).parent / "resources" / "import_to_anki.sh"
+    target_script_path = deck_dir / "import_to_anki.sh"
+    try:
+        shutil.copy2(script_path, target_script_path)
+        # Make the script executable
+        os.chmod(target_script_path, 0o755)
+    except Exception as e:
+        print(f"Warning: Could not copy import_to_anki.sh script: {e}")
+
+    # Create README.md from template
+    media_path = get_anki_media_dir()
     alias_term = (
         "alias" if platform.system() == "Darwin" else "shortcut" if platform.system() == "Windows" else "symbolic link"
     )
     article = "an" if alias_term[0].lower() in "aeiou" else "a"
-    readme_content = f"""# Anki Deck Import Instructions
+    alias_note = f"{article.capitalize()} {alias_term} to your Anki media folder is provided for convenience."
 
-1. Open Anki
-2. Click "File" > "Import"
-3. Select the `deck.txt` file in this directory
-4. In the import dialog:
-    - Set "Type" to "Basic"
-    - Set "Deck" to your desired deck name
-    - Set "Fields separated by" to "Tab"
-5. Import the audio files:
-    - Copy all files from: the `media` folder
-    - Paste them into: `{media_path}`
+    readme_content = README_TEMPLATE.format(media_path=media_path, alias_note=alias_note)
 
-Note: The media files are named with a hash of the source audio to avoid conflicts.
-{article.capitalize()} {alias_term} to your Anki media folder is provided for convenience.
-"""
     readme_file = deck_dir / "README.md"
     with open(readme_file, "w", encoding="utf-8") as f:
         f.write(readme_content)

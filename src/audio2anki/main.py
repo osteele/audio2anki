@@ -3,11 +3,13 @@
 import locale
 import logging
 from pathlib import Path
+from typing import Any
 
 import click
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.table import Table
+from rich.text import Text
 
 from .config import edit_config, load_config, reset_config, set_config_value
 from .pipeline import PipelineOptions, run_pipeline
@@ -49,6 +51,21 @@ def get_system_language() -> str:
         return language_map.get(primary_code, "english")
     except Exception:
         return "english"
+
+
+class LeftAlignedMarkdown(Markdown):
+    """Markdown with left-aligned h2-h6 headers, but keeping h1 centered."""
+
+    def __init__(self, markup: str, **kwargs: Any) -> None:
+        """Initialize with left-aligned heading style for h2-h6."""
+        super().__init__(markup, **kwargs)
+
+    def _get_heading_text(self, text: Text, level: int) -> Text:
+        """Override to left-align h2-h6 headings while keeping h1 centered."""
+        # Only change justification for h2-h6, leave h1 with default (centered)
+        if level > 1:
+            text.justify = "left"
+        return text
 
 
 @click.group()
@@ -107,8 +124,8 @@ def process(
         )
         content = content.replace("symbolic link", alias_term)
 
-        # Render markdown content
-        md = Markdown(content)
+        # Render markdown content with left-aligned headers
+        md = LeftAlignedMarkdown(content)
         console.print(md)
 
 
