@@ -15,7 +15,7 @@ from rich.progress import (
     TaskID,
     TaskProgressColumn,
     TextColumn,
-    TimeRemainingColumn,
+    TimeElapsedColumn,
 )
 
 T = TypeVar("T")
@@ -76,7 +76,7 @@ class PipelineProgress:
             TextColumn("[progress.description]{task.description}"),
             BarColumn(),
             TaskProgressColumn(),
-            TimeRemainingColumn(),
+            TimeElapsedColumn(),
             console=console,
         )
         pipeline_task = progress.add_task("Processing audio...", total=100)
@@ -96,23 +96,34 @@ class PipelineProgress:
         # Only create a new task if one doesn't already exist for this stage
         if stage_name not in self.stage_tasks:
             self.current_stage = stage_name
-            self.stage_tasks[stage_name] = self.progress.add_task(f"{stage_name}...", total=100, start=False)
+            # Create task with start=False to ensure proper timing
+            task_id = self.progress.add_task(f"{stage_name}...", total=100, start=False)
+            self.stage_tasks[stage_name] = task_id
+            # Start the task explicitly
+            self.progress.start_task(task_id)
         else:
             # Just set the current stage if the task already exists
             self.current_stage = stage_name
+            # Restart the task to ensure proper timing
+            task_id = self.stage_tasks[stage_name]
+            self.progress.reset(task_id)
+            self.progress.start_task(task_id)
 
     def complete_stage(self) -> None:
         """Mark the current stage as complete."""
         if self.current_stage and self.current_stage in self.stage_tasks:
             task_id = self.stage_tasks[self.current_stage]
             # Set progress to 100% and mark as completed to stop the spinner
-            self.progress.update(task_id, completed=100)
+            self.progress.update(task_id, completed=100, refresh=True)
+            # Stop the task to prevent further updates
             self.progress.stop_task(task_id)
+            # Ensure the task is marked as completed
+            self.progress.update(task_id, completed=100, refresh=True)
 
     def update_progress(self, percent: float) -> None:
         """Update progress for the current stage."""
         if self.current_stage and self.current_stage in self.stage_tasks:
-            self.progress.update(self.stage_tasks[self.current_stage], completed=percent)
+            self.progress.update(self.stage_tasks[self.current_stage], completed=percent, refresh=True)
 
 
 PipelineFunctionType = PipelineFunction | Callable[..., None]
