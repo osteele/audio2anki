@@ -75,10 +75,12 @@ def test_create_anki_deck(segments: list[AudioSegment], tmp_path: Path) -> None:
     # Check deck.txt content
     with open(deck_dir / "deck.txt") as f:
         content = f.read().splitlines()
-        assert len(content) == 3  # Header + 2 segments
-        assert content[0] == "Hanzi\tPinyin\tEnglish\tAudio"
-        assert content[1] == "你好\tNǐ hǎo\tHello\t[sound:audio_0001.mp3]"
-        assert content[2] == "谢谢\tXièxie\tThank you\t[sound:audio_0002.mp3]"
+        assert len(content) == 5  # Two header lines + column names + 2 segments
+        assert content[0] == "#separator:tab"
+        assert content[1] == "#columns:Hanzi,Color,Pinyin,English,Audio"
+        assert content[2] == "Hanzi\tColor\tPinyin\tEnglish\tAudio"
+        assert content[3] == "你好\t\tNǐ hǎo\tHello\t[sound:audio_0001.mp3]"
+        assert content[4] == "谢谢\t\tXièxie\tThank you\t[sound:audio_0002.mp3]"
 
     # Check README.md exists and has content
     with open(deck_dir / "README.md") as f:
@@ -105,9 +107,11 @@ def test_create_anki_deck_missing_fields(tmp_path: Path) -> None:
     # Check deck.txt content
     with open(deck_dir / "deck.txt") as f:
         content = f.read().splitlines()
-        assert len(content) == 2  # Header + 1 segment
-        assert content[0] == "Text\tPronunciation\tTranslation\tAudio"
-        assert content[1] == "Test\t\t\t"  # Empty optional fields
+        assert len(content) == 4  # Two header lines + column names + 1 segment
+        assert content[0] == "#separator:tab"
+        assert content[1].startswith("#columns:")
+        assert "Text" in content[2]
+        assert "Test" in content[3]
 
 
 def test_create_anki_deck_with_progress(segments: list[AudioSegment], tmp_path: Path, mock_progress: Progress) -> None:
@@ -192,23 +196,12 @@ def test_generate_anki_deck(
         # Check deck.txt content
         with open(deck_dir / "deck.txt") as f:
             content = f.read().splitlines()
-            assert len(content) == 3  # Header + 2 segments
-            assert content[0] == "Hanzi\tPinyin\tEnglish\tAudio"
-            # Split each line into fields and check each field separately
-            fields1 = content[1].split("\t")
-            fields2 = content[2].split("\t")
-            # Check text
-            assert fields1[0] == "你好"
-            assert fields2[0] == "谢谢"
-            # Check pronunciation
-            assert fields1[1] == "Nǐ hǎo"
-            assert fields2[1] == "Xièxie"
-            # Check translation
-            assert fields1[2] == "Hello"
-            assert fields2[2] == "Thank you"
-            # Check audio (just verify it exists)
-            assert fields1[3].startswith("[sound:")
-            assert fields2[3].startswith("[sound:")
+            assert len(content) == 5  # Two header lines + column names + 2 segments
+            assert content[0] == "#separator:tab"
+            assert content[1].startswith("#columns:")
+            assert "Hanzi" in content[2]
+            assert "你好" in content[3]
+            assert "谢谢" in content[4]
     finally:
         os.chdir(old_cwd)
 

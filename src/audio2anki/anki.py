@@ -118,52 +118,66 @@ def create_anki_deck(
     if input_audio_file and progress and task_id:
         segments = split_audio(input_audio_file, segments, media_dir, task_id, progress)
 
-    # Create deck.txt file
-    deck_file = deck_dir / "deck.txt"
-    with open(deck_file, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f, delimiter="\t")
-        target_language_name = (target_language or "Translation").capitalize()
-        if source_language == "chinese":
-            columns = ["Hanzi", "Pinyin", target_language_name, "Audio"]
-        elif source_language == "japanese":
-            columns = ["Japanese", "Pronunciation", target_language_name, "Audio"]
-        else:
-            columns = ["Text", "Pronunciation", target_language_name, "Audio"]
-        writer.writerow(columns)
+    # Initialize columns based on language
+    target_language_name = (target_language or "Translation").capitalize()
+    if source_language == "chinese":
+        columns = ["Hanzi", "Color", "Pinyin", target_language_name, "Audio"]
+    elif source_language == "japanese":
+        columns = ["Japanese", "Pronunciation", target_language_name, "Audio"]
+    else:
+        columns = ["Text", "Pronunciation", target_language_name, "Audio"]
 
-        # Write segments
-        total = len(segments)
-        if progress and task_id:
-            progress.update(task_id, total=total)
-
-        for segment in segments:
-            writer.writerow(
-                [
-                    segment.text,
-                    segment.pronunciation or "",
-                    segment.translation or "",
-                    f"[sound:{segment.audio_file}]" if segment.audio_file else "",
-                ]
-            )
-            if progress and task_id:
-                progress.update(task_id, advance=1)
-
-    # Create deck.csv file
-    csv_file = deck_dir / "deck.csv"
-    with open(csv_file, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        # CSV header based on language
-        if source_language == "chinese":
-            writer.writerow(["Hanzi", "Pinyin", "English", "Audio"])
-        elif source_language == "japanese":
-            writer.writerow(["Japanese", "Pronunciation", "English", "Audio"])
-        else:
-            writer.writerow(["Text", "Pronunciation", "English", "Audio"])
-
-        # Write segments to CSV
-        for segment in segments:
-            audio_path = f"media/{segment.audio_file}" if segment.audio_file else ""
-            writer.writerow([segment.text, segment.pronunciation or "", segment.translation or "", audio_path])
+    def create_deck_file(file_path: Path, delimiter: str | None = None, add_anki_header: bool = False):
+        """Create a deck file with the given segments and columns.
+        
+        Args:
+            file_path: Path to the output file
+            delimiter: CSV delimiter to use (None for default, '\t' for TSV)
+            add_anki_header: Whether to add Anki-specific header lines
+        """
+        with open(file_path, "w", newline="", encoding="utf-8") as f:
+            # Add Anki-specific headers if needed
+            if add_anki_header:
+                f.write("#separator:tab\n")
+                f.write(f"#columns:{','.join(columns)}\n")
+            
+            # Create writer with appropriate delimiter
+            writer = csv.writer(f, delimiter=delimiter or ',')
+            writer.writerow(columns)
+            
+            # Track progress if available
+            if progress and task_id and file_path.name == "deck.txt":  # Only track for first file
+                total = len(segments)
+                progress.update(task_id, total=total)
+                
+            # Write all segments
+            for segment in segments:
+                # Create a dictionary with all possible fields
+                fields = {
+                    "Hanzi": segment.text,
+                    "Japanese": segment.text,
+                    "Text": segment.text,
+                    "Color": "",  # Empty color field
+                    "Pinyin": segment.pronunciation or "",
+                    "Pronunciation": segment.pronunciation or "",
+                    target_language_name: segment.translation or "",
+                    "English": segment.translation or "",
+                    "Audio": f"[sound:{segment.audio_file}]" if segment.audio_file else "",
+                }
+                
+                # Use a list comprehension to create the row based on columns
+                row = [fields[column] for column in columns]
+                writer.writerow(row)
+                
+                # Update progress for the first file only
+                if progress and task_id and file_path.name == "deck.txt":
+                    progress.update(task_id, advance=1)
+    
+    # Create deck.txt file (tab-delimited with Anki headers)
+    create_deck_file(deck_dir / "deck.txt", delimiter="\t", add_anki_header=True)
+    
+    # Create deck.csv file (comma-delimited without Anki headers)
+    create_deck_file(deck_dir / "deck.csv")
 
     # Copy the import_to_anki.sh script to the deck directory
     script_path = Path(__file__).parent / "resources" / "import_to_anki.sh"
