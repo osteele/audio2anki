@@ -11,13 +11,13 @@ fi
 # Check if Anki is running
 if ! pgrep -x "Anki" > /dev/null; then
   echo "Starting Anki..."
-  open -a Anki
+  open -a Anki --background
   # Wait for Anki to start
   sleep 5
 fi
 
 # Run the add2anki tool
 echo "Importing cards to Anki..."
-uvx git+https://github.com/osteele/add2anki@release deck.csv --tags audio2anki
+uvx git+https://github.com/osteele/add2anki@audio2anki-support-1 deck.csv --tags audio2anki
 
 echo "Import complete!"
