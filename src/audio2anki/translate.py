@@ -2,6 +2,7 @@
 
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,21 @@ from openai import OpenAI
 from rich.progress import Progress, TaskID
 
 from .transcribe import TranscriptionSegment, load_transcript, save_transcript
+
+
+class TranslationProvider(str, Enum):
+    """Supported translation service providers."""
+
+    OPENAI = "openai"
+    DEEPL = "deepl"
+
+    @classmethod
+    def from_string(cls, value: str) -> "TranslationProvider":
+        """Convert a string to an enum value, case-insensitive."""
+        try:
+            return cls(value.lower())
+        except ValueError:
+            return cls.OPENAI  # Default to OpenAI
 
 
 def get_pinyin(text: str, client: OpenAI) -> str:
@@ -224,15 +240,19 @@ def translate_srt(
     task_id: TaskID,
     progress: Progress,
     source_language: str | None = None,
+    translation_provider: TranslationProvider = TranslationProvider.OPENAI,
 ) -> None:
     """Translate SRT file to target language.
 
     Args:
         input_file: Path to input SRT file
+        translation_output: Path where translated SRT will be saved
+        pronunciation_output: Path where pronunciation SRT will be saved
         target_language: Target language for translation
         task_id: Task ID for progress tracking
         progress: Progress bar instance
         source_language: Source language of the text (optional)
+        translation_provider: Provider to use for translation (OpenAI or DeepL)
 
     Returns:
         Tuple of (translated_file, reading_file). reading_file is None if not applicable.
@@ -251,18 +271,25 @@ def translate_srt(
     translator = openai_client  # Default to OpenAI
     use_deepl = False
 
-    # Try DeepL first if available
-    if deepl_token:
-        try:
-            translator = deepl.Translator(deepl_token)
-            use_deepl = True
-            progress.update(task_id, description="Translating segments using DeepL...")
-        except Exception as e:
-            print(f"Warning: Failed to initialize DeepL ({str(e)}), falling back to OpenAI")
-            deepl_token = None
-
-    # Fall back to OpenAI if DeepL is not available
-    if not deepl_token:
+    # Use the specified translation provider
+    if translation_provider == TranslationProvider.DEEPL:
+        if deepl_token:
+            try:
+                translator = deepl.Translator(deepl_token)
+                use_deepl = True
+                progress.update(task_id, description="Translating segments using DeepL...")
+            except Exception as e:
+                print(f"Warning: Failed to initialize DeepL ({str(e)}), falling back to OpenAI")
+                # Fall back to OpenAI
+                translator = openai_client
+                use_deepl = False
+                progress.update(task_id, description="Translating segments using OpenAI...")
+        else:
+            print("Warning: DeepL selected but DEEPL_API_TOKEN not set, falling back to OpenAI")
+            translator = openai_client
+            use_deepl = False
+            progress.update(task_id, description="Translating segments using OpenAI...")
+    else:  # OpenAI
         translator = openai_client
         use_deepl = False
         progress.update(task_id, description="Translating segments using OpenAI...")

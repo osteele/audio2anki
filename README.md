@@ -47,6 +47,16 @@ export OPENAI_API_KEY=your-api-key-here
 audio2anki audio.mp3 --transcript transcript.txt
 ```
 
+Specify which translation service to use:
+```bash
+# Use OpenAI for translation (default)
+audio2anki audio.mp3 --translation-provider openai
+
+# Use DeepL for translation
+export DEEPL_API_TOKEN=your-deepl-token-here
+audio2anki audio.mp3 --translation-provider deepl
+```
+
 For a complete list of commands, including cache and configuration management, see the [CLI documentation](./docs/cli.md).
 
 ### Common Use Cases
@@ -80,6 +90,7 @@ Options:
   --max-length SEC   Maximum segment length (default: 15.0)
   --language LANG    Source language (default: auto-detect)
   --silence-thresh DB Silence threshold (default: -40)
+  --translation-provider {openai,deepl}  Translation service to use (default: openai)
 ```
 
 ### Environment Variables
@@ -94,20 +105,19 @@ Optional:
 
 The tool supports two translation services:
 
-1. **DeepL** (Preferred)
+1. **DeepL**
    - Higher quality translations, especially for European languages
    - Get an API key from [DeepL Pro](https://www.deepl.com/pro-api)
    - Set environment variable: `export DEEPL_API_TOKEN=your-api-key`
+   - Use with: `--translation-provider deepl`
 
-2. **OpenAI** (Fallback)
-   - Used when DeepL is not configured or fails
+2. **OpenAI** (Default)
+   - Used by default or when DeepL is not configured or fails
    - Get an API key from [OpenAI](https://platform.openai.com/api-keys)
    - Set environment variable: `export OPENAI_API_KEY=your-api-key`
+   - Use with: `--translation-provider openai`
 
-The tool will automatically:
-1. Try to use DeepL first if `DEEPL_API_TOKEN` is set
-2. Fall back to OpenAI if DeepL is not available or fails
-3. Show an error if neither API key is available
+Note: OpenAI is always used for generating pronunciations (Pinyin, Hiragana), even when DeepL is selected for translation.
 
 ### Output
 

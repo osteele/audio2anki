@@ -18,6 +18,8 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 
+from .translate import TranslationProvider
+
 T = TypeVar("T")
 
 
@@ -57,6 +59,7 @@ class PipelineOptions:
     source_language: str = "chinese"
     target_language: str | None = None
     output_folder: Path | None = None
+    translation_provider: TranslationProvider = TranslationProvider.OPENAI
 
 
 @dataclass
@@ -138,6 +141,7 @@ class PipelineContext:
     source_language: str = "chinese"
     target_language: str | None = None
     output_folder: Path | None = None
+    translation_provider: TranslationProvider = TranslationProvider.OPENAI
     _current_fn: PipelineFunction | None = None
     _input_file: Path | None = None
     _stage_inputs: dict[str, Path] = field(default_factory=dict)
@@ -326,6 +330,7 @@ class PipelineRunner:
             source_language=options.source_language,
             target_language=options.target_language,
             output_folder=options.output_folder,
+            translation_provider=options.translation_provider,
         )
         context.set_input_file(input_file)
 
@@ -611,6 +616,7 @@ def translate(context: PipelineContext, transcribe: Path) -> None:
         source_language=context.source_language,
         translation_output=translation_path,
         pronunciation_output=pronunciation_path,
+        translation_provider=context.translation_provider,
     )
 
 

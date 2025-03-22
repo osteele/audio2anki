@@ -139,6 +139,14 @@ def transcribe_audio(
     if progress and task_id:
         progress.update(task_id, description="Transcribing audio with Whisper...")
 
+    prompt = """
+    Try to transcribe whole sentences as segments.
+    """
+
+    if language == "zh":
+        prompt += "请用简体。"
+    print(prompt)
+
     try:
         # Transcribe audio
         with open(audio_file, "rb") as f:
@@ -148,12 +156,14 @@ def transcribe_audio(
                     model=model,
                     response_format="verbose_json",
                     language=language,
+                    prompt=prompt,
                 )
                 if language
                 else client.audio.transcriptions.create(
                     file=f,
                     model=model,
                     response_format="verbose_json",
+                    prompt=prompt,
                 )
             )
     except httpx.HTTPStatusError as e:
