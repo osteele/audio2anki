@@ -222,9 +222,8 @@ def test_pipeline_runner_should_use_cache(pipeline_runner: PipelineRunner) -> No
     # Test terminal function
     assert pipeline_runner.should_use_cache(terminal_func) is False
 
-    # Test with bypass_cache=True
-    pipeline_runner.options.bypass_cache = True
-    assert pipeline_runner.should_use_cache(normal_func) is False
+    # We no longer have bypass_cache option, but terminal functions still skip cache
+    assert pipeline_runner.should_use_cache(terminal_func) is False
 
 
 def test_pipeline_runner_get_cached_artifacts(pipeline_runner: PipelineRunner, tmp_path: Path) -> None:

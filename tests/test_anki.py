@@ -239,8 +239,8 @@ def test_generate_anki_deck_with_output_folder(
         # Test with custom output folder
         custom_folder = "my_custom_folder"
 
-        # Just use a direct path for the test
-        tmp_path / custom_folder
+        # Create the custom folder
+        (tmp_path / custom_folder).mkdir(exist_ok=True)
 
         # Now test the full generation function
         deck_dir = generate_anki_deck(

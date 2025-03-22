@@ -53,12 +53,11 @@ def pipeline_function(**artifacts: dict[str, Any]) -> Callable[[Callable[..., No
 class PipelineOptions:
     """Options that control pipeline behavior."""
 
-    bypass_cache: bool = False
-    keep_cache: bool = False
     debug: bool = False
     source_language: str = "chinese"
     target_language: str | None = None
     output_folder: Path | None = None
+    skip_voice_isolation: bool = False
     translation_provider: TranslationProvider = TranslationProvider.OPENAI
 
 
@@ -334,8 +333,11 @@ class PipelineRunner:
         )
         context.set_input_file(input_file)
 
-        # Define pipeline stages
-        pipeline = [transcode, voice_isolation, transcribe, translate, generate_deck]
+        # Define pipeline stages, optionally skipping voice isolation
+        pipeline = [transcode]
+        if not options.skip_voice_isolation:
+            pipeline.append(voice_isolation)
+        pipeline.extend([transcribe, translate, generate_deck])
         initial_artifacts = {"input_path": input_file}
 
         return cls(
@@ -348,9 +350,6 @@ class PipelineRunner:
 
     def should_use_cache(self, func: PipelineFunctionType) -> bool:
         """Determine if caching should be used for this function."""
-        if self.options.bypass_cache:
-            return False
-
         # Check if this is a terminal stage that should bypass cache
         if isinstance(func, PipelineFunction) and hasattr(func, "produced_artifacts"):
             for artifact_info in func.produced_artifacts.values():
@@ -525,8 +524,8 @@ def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -
     """
     from . import cache
 
-    # Initialize a new temporary cache with keep_files option
-    cache.init_cache(keep_files=options.keep_cache)
+    # Initialize a new temporary cache
+    cache.init_cache(keep_files=False)
     logging.info("Initialized temporary cache")
 
     try:
@@ -539,9 +538,8 @@ def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -
             result = runner.run()
             return result
     finally:
-        # Clean up cache unless keep_cache is True
-        if not options.keep_cache:
-            cache.cleanup_cache()
+        # Clean up cache
+        cache.cleanup_cache()
 
 
 @pipeline_function(transcode={"extension": "mp3"})
@@ -566,8 +564,12 @@ def voice_isolation(context: PipelineContext, transcode: Path) -> None:
 
 
 @pipeline_function(transcribe={"extension": "srt"})
-def transcribe(context: PipelineContext, voice_isolation: Path) -> None:
+def transcribe(context: PipelineContext, voice_isolation: Path | None = None, transcode: Path | None = None) -> None:
     """Transcribe the audio file using OpenAI Whisper and produce an SRT file."""
+    # Use voice_isolation if available, otherwise fall back to transcode
+    input_path = voice_isolation if voice_isolation is not None else transcode
+    if input_path is None:
+        raise ValueError("Both voice_isolation and transcode inputs are None")
     from .transcribe import transcribe_audio
 
     # Map full language names to Whisper codes
@@ -591,7 +593,7 @@ def transcribe(context: PipelineContext, voice_isolation: Path) -> None:
 
     # Call transcribe_audio with the output path
     transcribe_audio(
-        audio_file=voice_isolation,
+        audio_file=input_path,
         transcript_path=output_path,
         model="whisper-1",
         task_id=context.stage_task_id,
@@ -623,12 +625,17 @@ def translate(context: PipelineContext, transcribe: Path) -> None:
 @pipeline_function(deck={"extension": "directory", "terminal": True})
 def generate_deck(
     context: PipelineContext,
-    voice_isolation: Path,
     transcribe: Path,
     translation: Path,
     pronunciation: Path | None,
+    voice_isolation: Path | None = None,
+    transcode: Path | None = None,
 ) -> None:
     """Generate an Anki flashcard deck from the processed data."""
+    # Use voice_isolation if available, otherwise fall back to transcode
+    input_audio = voice_isolation if voice_isolation is not None else transcode
+    if input_audio is None:
+        raise ValueError("Both voice_isolation and transcode inputs are None")
     from .anki import generate_anki_deck
 
     # Use the output folder from context if provided, otherwise use cwd
@@ -637,7 +644,7 @@ def generate_deck(
     # Generate the Anki deck
     deck_dir = generate_anki_deck(
         input_data=translation,  # translation file contains the main content
-        input_audio_file=voice_isolation,
+        input_audio_file=input_audio,
         transcription_file=transcribe,
         pronunciation_file=pronunciation,
         source_language=context.source_language,

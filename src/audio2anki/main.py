@@ -133,11 +133,10 @@ def cli():
 @cli.command()
 @click.argument("input_file", type=click.Path(exists=True))
 @click.option("--debug", is_flag=True, help="Enable debug logging")
-@click.option("--bypass-cache", is_flag=True, help="Skip cache lookup and force reprocessing")
-@click.option("--keep-cache", is_flag=True, help="Keep temporary cache directory after processing (for debugging)")
 @click.option("--target-language", help="Target language for translation")
 @click.option("--source-language", default="chinese", help="Source language for transcription")
 @click.option("--output-folder", help="Specify the output folder for the deck")
+@click.option("--skip-voice-isolation", is_flag=True, help="Skip the voice isolation step")
 @click.option(
     "--translation-provider",
     type=click.Choice(["openai", "deepl"], case_sensitive=False),
@@ -147,11 +146,10 @@ def cli():
 def process(
     input_file: str,
     debug: bool = False,
-    bypass_cache: bool = False,
-    keep_cache: bool = False,
     target_language: str | None = None,
     source_language: str = "chinese",
     output_folder: str | None = None,
+    skip_voice_isolation: bool = False,
     translation_provider: str = "openai",
 ) -> None:
     """Process an audio/video file and generate Anki flashcards."""
@@ -174,10 +172,9 @@ def process(
     options = PipelineOptions(
         target_language=target_language,
         source_language=source_language,
-        bypass_cache=bypass_cache,
-        keep_cache=keep_cache,
         debug=debug,
         output_folder=resolved_output_path,
+        skip_voice_isolation=skip_voice_isolation,
         translation_provider=translation_provider_enum,
     )
     deck_dir = str(run_pipeline(Path(input_file), console, options))

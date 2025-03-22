@@ -91,6 +91,7 @@ Options:
   --language LANG    Source language (default: auto-detect)
   --silence-thresh DB Silence threshold (default: -40)
   --translation-provider {openai,deepl}  Translation service to use (default: openai)
+  --skip-voice-isolation  Skip the voice isolation step
 ```
 
 ### Environment Variables
@@ -118,6 +119,18 @@ The tool supports two translation services:
    - Use with: `--translation-provider openai`
 
 Note: OpenAI is always used for generating pronunciations (Pinyin, Hiragana), even when DeepL is selected for translation.
+
+### Voice Isolation
+
+By default, audio2anki uses the ElevenLabs API to isolate voices from background noise, which improves transcription quality. This requires:
+
+- An ElevenLabs API key
+- Set environment variable: `export ELEVENLABS_API_KEY=your-api-key`
+
+If you experience issues with the voice isolation service or don't want to use it, you can skip this step with:
+```bash
+audio2anki audio.mp3 --skip-voice-isolation
+```
 
 ### Output
 
@@ -159,6 +172,23 @@ The script creates:
    - Test the audio playback on a few cards
 
 **Note**: The audio filenames include a hash of the source file to prevent conflicts when importing multiple decks.
+
+## Troubleshooting
+
+### Voice Isolation Errors
+
+If you see the error "Voice Isolation Error: No audio data received from API", try one of these solutions:
+
+1. Check that your `ELEVENLABS_API_KEY` is correct and you have available usage
+2. Skip the voice isolation step entirely:
+   ```bash
+   audio2anki audio.mp3 --skip-voice-isolation
+   ```
+
+### Other Common Issues
+
+- If transcription is poor, try using a cleaner audio source or the skip-voice-isolation flag
+- For memory errors or timeouts, try processing a shorter audio file
 
 ## Development
 
