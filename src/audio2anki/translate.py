@@ -1,16 +1,19 @@
 """Translation module using OpenAI or DeepL API."""
 
+import hashlib
+import json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, TypedDict
 
 import deepl
 from openai import OpenAI
 from rich.progress import Progress, TaskID
 
 from .transcribe import TranscriptionSegment, load_transcript, save_transcript
+from .types import LanguageCode
 
 
 class TranslationProvider(str, Enum):
@@ -28,26 +31,98 @@ class TranslationProvider(str, Enum):
             return cls.OPENAI  # Default to OpenAI
 
 
+class TranslationParams(TypedDict):
+    """Parameters that affect translation output."""
+
+    source_language: LanguageCode | None
+    target_language: LanguageCode
+    translation_provider: str
+    openai_translation_prompt: str
+    pinyin_prompt: str
+    hiragana_prompt: str
+    openai_model: str
+
+
+# Constants used for translation
+OPENAI_MODEL: Literal["gpt-4o-mini"] = "gpt-4o-mini"
+
+TRANSLATION_PROMPTS = {
+    "translation": "You are a translator. Translate the given text to {target_language}.",
+    "pinyin": (
+        "You are a Chinese language expert. For the given Chinese text:\n"
+        "1. Provide Pinyin with tone marks (ā/á/ǎ/à)\n"
+        "2. Group syllables into words (no spaces between syllables of the same word)\n"
+        "3. Capitalize proper nouns\n"
+        "4. Use spaces only between words, not syllables\n"
+        "5. Do not include any other text or punctuation\n\n"
+        "Examples:\n"
+        "Input: 我姓王，你可以叫我小王。\n"
+        "Output: wǒ xìngwáng nǐ kěyǐ jiào wǒ Xiǎo Wáng\n\n"
+        "Input: 他在北京大学学习。\n"
+        "Output: tā zài Běijīng Dàxué xuéxí"
+    ),
+    "hiragana": (
+        "You are a Japanese language expert. For the given Japanese text:\n"
+        "1. Provide hiragana reading\n"
+        "2. Keep spaces and punctuation as in the original text\n"
+        "3. Do not include any other text or explanations\n\n"
+        "Examples:\n"
+        "Input: 私は田中です。\n"
+        "Output: わたしはたなかです。\n\n"
+        "Input: 東京大学で勉強しています。\n"
+        "Output: とうきょうだいがくでべんきょうしています。"
+    ),
+}
+
+
+def get_translation_version(
+    source_language: LanguageCode | None, target_language: LanguageCode, translation_provider: TranslationProvider
+) -> int:
+    """
+    Generate a version number for the translation function based on its critical parameters.
+
+    This creates a hash of the source language, target language, provider, and the system prompts
+    used for translation and reading generation, which will change if any of these parameters
+    change, ensuring cached artifacts are invalidated appropriately.
+
+    Args:
+        source_language: The source language of the text
+        target_language: The target language for translation
+        translation_provider: The provider used for translation (OpenAI or DeepL)
+
+    Returns:
+        An integer version derived from the hash of parameters
+    """
+    # Create a dictionary of parameters that affect the output
+    params: TranslationParams = {
+        "source_language": source_language,
+        "target_language": target_language,
+        "translation_provider": str(translation_provider),
+        "openai_translation_prompt": TRANSLATION_PROMPTS["translation"].format(target_language=target_language),
+        "pinyin_prompt": TRANSLATION_PROMPTS["pinyin"],
+        "hiragana_prompt": TRANSLATION_PROMPTS["hiragana"],
+        "openai_model": OPENAI_MODEL,
+    }
+
+    # Create a stable string representation for hashing
+    param_str = json.dumps(params, sort_keys=True)
+
+    # Hash the parameters and convert to an integer
+    hash_obj = hashlib.sha256(param_str.encode())
+    # Use the first 4 bytes of the hash as an integer
+    version = abs(int.from_bytes(hash_obj.digest()[:4], byteorder="big"))
+
+    return version
+
+
 def get_pinyin(text: str, client: OpenAI) -> str:
     """Get Pinyin for Chinese text using OpenAI."""
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=OPENAI_MODEL,
         messages=[
             {
                 "role": "system",
-                "content": (
-                    "You are a Chinese language expert. For the given Chinese text:\n"
-                    "1. Provide Pinyin with tone marks (ā/á/ǎ/à)\n"
-                    "2. Group syllables into words (no spaces between syllables of the same word)\n"
-                    "3. Capitalize proper nouns\n"
-                    "4. Use spaces only between words, not syllables\n"
-                    "5. Do not include any other text or punctuation\n\n"
-                    "Examples:\n"
-                    "Input: 我姓王，你可以叫我小王。\n"
-                    "Output: wǒ xìngwáng nǐ kěyǐ jiào wǒ Xiǎo Wáng\n\n"
-                    "Input: 他在北京大学学习。\n"
-                    "Output: tā zài Běijīng Dàxué xuéxí"
-                ),
+                "content": TRANSLATION_PROMPTS["pinyin"],
             },
             {"role": "user", "content": text},
         ],
@@ -62,21 +137,11 @@ def get_pinyin(text: str, client: OpenAI) -> str:
 def get_hiragana(text: str, client: OpenAI) -> str:
     """Get hiragana for Japanese text using OpenAI."""
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=OPENAI_MODEL,
         messages=[
             {
                 "role": "system",
-                "content": (
-                    "You are a Japanese language expert. For the given Japanese text:\n"
-                    "1. Provide hiragana reading\n"
-                    "2. Keep spaces and punctuation as in the original text\n"
-                    "3. Do not include any other text or explanations\n\n"
-                    "Examples:\n"
-                    "Input: 私は田中です。\n"
-                    "Output: わたしはたなかです。\n\n"
-                    "Input: 東京大学で勉強しています。\n"
-                    "Output: とうきょうだいがくでべんきょうしています。"
-                ),
+                "content": TRANSLATION_PROMPTS["hiragana"],
             },
             {"role": "user", "content": text},
         ],
@@ -88,19 +153,19 @@ def get_hiragana(text: str, client: OpenAI) -> str:
     return hiragana.strip()
 
 
-def get_reading(text: str, source_language: str, client: OpenAI) -> str | None:
+def get_reading(text: str, source_language: LanguageCode, client: OpenAI) -> str | None:
     """Get reading (pinyin or hiragana) based on source language."""
-    if source_language.lower() in ["chinese", "zh", "mandarin"]:
+    if source_language.lower() in ["zh", "zh-cn", "zh-tw"]:
         return get_pinyin(text, client)
-    elif source_language.lower() in ["japanese", "ja"]:
+    elif source_language.lower() == "ja":
         return get_hiragana(text, client)
     return None
 
 
 def translate_with_openai(
     text: str,
-    source_language: str | None,
-    target_language: str,
+    source_language: LanguageCode | None,
+    target_language: LanguageCode,
     client: OpenAI,
 ) -> tuple[str, str | None]:
     """Translate text using OpenAI API.
@@ -109,11 +174,11 @@ def translate_with_openai(
         Tuple of (translation, reading). Reading is pinyin for Chinese or hiragana for Japanese.
     """
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=OPENAI_MODEL,
         messages=[
             {
                 "role": "system",
-                "content": f"You are a translator. Translate the given text to {target_language}.",
+                "content": TRANSLATION_PROMPTS["translation"].format(target_language=target_language),
             },
             {"role": "user", "content": f"Translate the following text to {target_language}:\n{text}"},
         ],
@@ -133,8 +198,8 @@ def translate_with_openai(
 
 def translate_with_deepl(
     text: str,
-    source_language: str | None,
-    target_language: str,
+    source_language: LanguageCode | None,
+    target_language: LanguageCode,
     translator: deepl.Translator,
     openai_client: OpenAI | None = None,
 ) -> tuple[str, str | None]:
@@ -175,8 +240,8 @@ def translate_with_deepl(
 
 def translate_single_segment(
     segment: TranscriptionSegment,
-    source_language: str | None,
-    target_language: str,
+    source_language: LanguageCode | None,
+    target_language: LanguageCode,
     translator: Any,
     use_deepl: bool = False,
     openai_client: OpenAI | None = None,
@@ -232,30 +297,63 @@ def translate_single_segment(
         return segment, None, False
 
 
-def translate_srt(
-    input_file: Path,
-    translation_output: Path,
-    pronunciation_output: Path,
-    target_language: str,
-    task_id: TaskID,
-    progress: Progress,
-    source_language: str | None = None,
-    translation_provider: TranslationProvider = TranslationProvider.OPENAI,
-) -> None:
-    """Translate SRT file to target language.
+def normalize_hanzi(text: str) -> str:
+    """Normalize hanzi text for comparison by removing spaces and final period.
 
     Args:
-        input_file: Path to input SRT file
-        translation_output: Path where translated SRT will be saved
-        pronunciation_output: Path where pronunciation SRT will be saved
+        text: The text to normalize
+
+    Returns:
+        Normalized text with spaces removed and final period removed
+    """
+    # Remove spaces
+    text = text.replace(" ", "")
+    # Remove final period but keep other punctuation
+    if text.endswith("。"):
+        text = text[:-1]
+    return text
+
+
+def deduplicate_segments(segments: list[TranscriptionSegment]) -> list[TranscriptionSegment]:
+    """Deduplicate segments based on normalized hanzi text.
+
+    Args:
+        segments: List of segments to deduplicate
+
+    Returns:
+        List of segments with duplicates removed, keeping the first occurrence of each normalized text
+    """
+    seen: set[str] = set()
+    result: list[TranscriptionSegment] = []
+
+    for segment in segments:
+        normalized = normalize_hanzi(segment.text)
+        if normalized not in seen:
+            seen.add(normalized)
+            result.append(segment)
+
+    return result
+
+
+def translate_segments_to_json(
+    input_file: Path,
+    output_file: Path,
+    target_language: LanguageCode,
+    task_id: TaskID,
+    progress: Progress,
+    source_language: LanguageCode | None = None,
+    translation_provider: TranslationProvider = TranslationProvider.OPENAI,
+) -> None:
+    """Translate transcript and save as JSON file with transcription, translation, and pronunciation.
+
+    Args:
+        input_file: Path to input transcript file (SRT)
+        output_file: Path where JSON file with all data will be saved
         target_language: Target language for translation
         task_id: Task ID for progress tracking
         progress: Progress bar instance
         source_language: Source language of the text (optional)
         translation_provider: Provider to use for translation (OpenAI or DeepL)
-
-    Returns:
-        Tuple of (translated_file, reading_file). reading_file is None if not applicable.
     """
     # Check for API keys
     deepl_token = os.environ.get("DEEPL_API_TOKEN")
@@ -294,14 +392,17 @@ def translate_srt(
         use_deepl = False
         progress.update(task_id, description="Translating segments using OpenAI...")
 
-    # Load segments from SRT file
+    # Load segments from transcript file
     segments = load_transcript(input_file)
+
+    # Deduplicate segments based on normalized hanzi
+    segments = deduplicate_segments(segments)
+
     total_segments = len(segments)
     progress.update(task_id, total=total_segments)
 
     # Use ThreadPoolExecutor for parallel processing
-    translated_segments: list[TranscriptionSegment] = []
-    reading_segments: list[TranscriptionSegment] = []
+    enriched_segments: list[TranscriptionSegment] = []
     total_success = 0
 
     with ThreadPoolExecutor(max_workers=4) as executor:
@@ -322,19 +423,25 @@ def translate_srt(
         # Process completed translations
         for future in as_completed(future_to_segment):
             translated_segment, reading_segment, success = future.result()
-            translated_segments.append(translated_segment)
-            if reading_segment:
-                reading_segments.append(reading_segment)
+            original_segment = future_to_segment[future]
+
+            # Create an enriched segment with all information
+            enriched = TranscriptionSegment(
+                start=original_segment.start,
+                end=original_segment.end,
+                text=original_segment.text,  # Original transcription
+                translation=translated_segment.text,  # Translation
+                pronunciation=reading_segment.text if reading_segment else None,  # Pronunciation
+            )
+
+            enriched_segments.append(enriched)
             if success:
                 total_success += 1
             progress.update(task_id, advance=1)
 
-    # Save translated SRT file
-    save_transcript(translated_segments, translation_output)
+    # Save all data to a single JSON file
 
-    # Save reading SRT file if applicable
-    if reading_segments:
-        save_transcript(reading_segments, pronunciation_output)
+    save_transcript(enriched_segments, output_file)
 
     progress.update(task_id, description=f"Translation complete ({total_success}/{total_segments} successful)")
 
@@ -342,10 +449,10 @@ def translate_srt(
 # Translate a list of segments (used by tests)
 def translate_segments(
     segments: list[TranscriptionSegment],
-    target_language: str,
+    target_language: LanguageCode,
     task_id: TaskID,
     progress: Progress,
-    source_language: str | None = None,
+    source_language: LanguageCode | None = None,
 ) -> list[TranscriptionSegment]:
     """Translate a list of transcription segments to the target language.
 

@@ -5,6 +5,16 @@ import unicodedata
 from pathlib import Path
 
 
+def format_bytes(size_bytes: int) -> str:
+    """Convert bytes to a human-readable format."""
+    size = float(size_bytes)  # Convert to float for division
+    for unit in ["B", "KB", "MB", "GB"]:
+        if size < 1024 or unit == "GB":
+            return f"{size:.2f} {unit}"
+        size /= 1024
+    return f"{size:.2f} GB"  # Fallback return for completeness
+
+
 def sanitize_filename(filename: str, max_length: int = 32) -> str:
     """
     Sanitize a filename by removing unsafe characters and limiting length.
@@ -54,3 +64,62 @@ def sanitize_filename(filename: str, max_length: int = 32) -> str:
         filename = truncated_name + ext
 
     return filename
+
+
+def is_metadata_file(path: Path) -> bool:
+    """Check if a file is a system metadata file that should be ignored when determining if a directory is empty."""
+    # macOS metadata files
+    macos_patterns = {".DS_Store", ".AppleDouble", ".LSOverride"}
+    if path.name.startswith("._"):  # macOS resource fork files
+        return True
+
+    # Windows metadata files
+    windows_patterns = {"Thumbs.db", "ehthumbs.db", "Desktop.ini", "$RECYCLE.BIN"}
+
+    # Linux metadata files
+    linux_patterns = {".directory"}
+    if path.name.startswith(".Trash-"):
+        return True
+
+    # IDE/Editor metadata files
+    ide_patterns = {".idea", ".vscode"}
+    if path.name.endswith((".swp", "~")) or path.name.startswith(".") and path.name.endswith(".swp"):
+        return True
+
+    return path.name in macos_patterns | windows_patterns | linux_patterns | ide_patterns
+
+
+def is_empty_directory(path: Path) -> bool:
+    """Check if a directory is empty, ignoring system metadata files."""
+    if not path.is_dir():
+        return False
+
+    return all(is_metadata_file(f) for f in path.iterdir())
+
+
+def is_deck_folder(path: Path) -> bool:
+    """Check if a directory is a valid deck folder."""
+    if not path.is_dir():
+        return False
+
+    # Required deck files
+    required_files = {"deck.txt", "README.md"}
+    # At least one CSV file should exist
+    has_csv = False
+    # Should have a media directory
+    has_media_dir = False
+
+    for item in path.iterdir():
+        if is_metadata_file(item):
+            continue
+        if item.name in required_files:
+            required_files.remove(item.name)
+        elif item.suffix == ".csv":
+            has_csv = True
+        elif item.is_dir() and item.name == "media":
+            has_media_dir = True
+        else:
+            # Unknown file found
+            return False
+
+    return len(required_files) == 0 and has_csv and has_media_dir

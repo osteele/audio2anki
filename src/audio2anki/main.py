@@ -13,6 +13,7 @@ from rich.text import Text
 
 from .config import edit_config, load_config, reset_config, set_config_value
 from .pipeline import PipelineOptions, run_pipeline
+from .utils import is_deck_folder, is_empty_directory
 
 # Setup basic logging configuration
 console = Console()
@@ -21,7 +22,24 @@ console = Console()
 def configure_logging(debug: bool = False) -> None:
     """Configure logging based on debug flag."""
     level = logging.DEBUG if debug else logging.WARNING
-    logging.basicConfig(level=level, format="%(message)s")
+
+    # Configure root logger with basic format
+    logging.basicConfig(level=level, format="%(levelname)s: %(message)s")
+
+    # Set the logger for our package to the same level
+    logger = logging.getLogger("audio2anki")
+    logger.setLevel(level)
+
+    # If in debug mode, use a more detailed formatter
+    if debug:
+        # Create console handler if none exists
+        if not logger.handlers:
+            console_handler = logging.StreamHandler()
+            logger.addHandler(console_handler)
+
+        # Set formatter for all handlers
+        for handler in logger.handlers:
+            handler.setFormatter(logging.Formatter("%(levelname)s: %(name)s - %(message)s"))
 
 
 def get_system_language() -> str:
@@ -30,27 +48,42 @@ def get_system_language() -> str:
         # Try to get the system locale
         lang_code = locale.getdefaultlocale()[0]
         if not lang_code:
-            return "english"
-
-        # Map common language codes to full names
-        language_map: dict[str, str] = {
-            "en": "english",
-            "zh": "chinese",
-            "ja": "japanese",
-            "ko": "korean",
-            "fr": "french",
-            "de": "german",
-            "es": "spanish",
-            "it": "italian",
-            "pt": "portuguese",
-            "ru": "russian",
-        }
+            return "en"
 
         # Extract primary language code (e.g., "en" from "en_US")
         primary_code = lang_code.split("_")[0].lower()
-        return language_map.get(primary_code, "english")
+        return primary_code
     except Exception:
-        return "english"
+        return "en"
+
+
+def language_name_to_code(language_name: str) -> str | None:
+    """
+    Translates a language name to its corresponding language code.
+
+    Args:
+        language_name (str): The name of the language (e.g., "English", "Chinese").
+
+    Returns:
+        str: The corresponding language code (e.g., "en", "zh"), or None if not found.
+    """
+    import langcodes
+
+    if len(language_name) == 2:
+        return language_name
+
+    try:
+        # Normalize input by lowercasing
+        normalized_name = language_name.lower().strip()
+
+        # Get the language object from name
+        lang = langcodes.find(normalized_name)
+
+        # Return the ISO 639-1 code (2-letter code)
+        return lang.to_tag()
+    except (LookupError, AttributeError):
+        # Return None if language is not found
+        return None
 
 
 class LeftAlignedMarkdown(Markdown):
@@ -77,51 +110,35 @@ def determine_output_path(base_path: Path, output_folder: str | None, input_file
         input_file: Input audio/video file path
 
     Returns:
-        Path: The determined output directory path (does not create directories)
+        Path: The determined output directory path
+
+    Raises:
+        click.ClickException: If target directory exists and is neither empty nor a deck folder
     """
-    # If no output_folder is specified, derive it from input file name
+    # If no output_folder is specified, use decks/input_filename
     if output_folder is None:
-        input_filename = input_file.stem
-        output_folder = f"decks/{input_filename}"
+        path_a = base_path / "decks" / input_file.stem
+        if path_a.exists() and not (is_empty_directory(path_a) or is_deck_folder(path_a)):
+            raise click.ClickException(f"Output directory '{path_a}' exists and is neither empty nor a deck folder")
+        return path_a
 
-    if output_folder:
-        # Handle absolute paths - for tests compatibility, always append input filename
-        # unless it's an existing deck folder
-        if Path(output_folder).is_absolute():
-            abs_path = Path(output_folder)
-            deck_csv = abs_path / "deck.csv"
-            deck_txt = abs_path / "deck.txt"
-            media_dir = abs_path / "media"
-            is_deck_folder = abs_path.exists() and (deck_csv.exists() or deck_txt.exists()) and media_dir.exists()
+    # Convert to Path and handle absolute vs relative paths
+    path_a = Path(output_folder)
+    if not path_a.is_absolute():
+        path_a = base_path / output_folder
 
-            if is_deck_folder:
-                return abs_path
-            else:
-                # For non-deck dirs, always append the input filename (for test compatibility)
-                derived_name = input_file.stem
-                return abs_path / derived_name
+    # If path exists and is either empty or a deck folder, use it directly
+    if path_a.exists():
+        if is_empty_directory(path_a) or is_deck_folder(path_a):
+            return path_a
+        # Otherwise, try appending input filename
+        path_b = path_a / input_file.stem
+        if path_b.exists() and not (is_empty_directory(path_b) or is_deck_folder(path_b)):
+            raise click.ClickException(f"Output directory '{path_b}' exists and is neither empty nor a deck folder")
+        return path_b
 
-        # Handle relative paths
-        full_output_path = base_path / output_folder
-        if full_output_path.exists():
-            deck_csv = full_output_path / "deck.csv"
-            deck_txt = full_output_path / "deck.txt"
-            media_dir = full_output_path / "media"
-            is_deck_folder = (deck_csv.exists() or deck_txt.exists()) and media_dir.exists()
-            is_empty_folder = full_output_path.is_dir() and not any(full_output_path.iterdir())
-        else:
-            is_deck_folder = False
-            is_empty_folder = False
-
-        if not full_output_path.exists() or is_deck_folder or is_empty_folder:
-            return full_output_path
-        else:
-            derived_name = input_file.stem
-            nested_path = full_output_path / derived_name
-            return nested_path
-    else:
-        # Default fallback to base_path
-        return base_path
+    # Path doesn't exist, use it directly
+    return path_a
 
 
 @click.group()
@@ -133,26 +150,28 @@ def cli():
 @cli.command()
 @click.argument("input_file", type=click.Path(exists=True))
 @click.option("--debug", is_flag=True, help="Enable debug logging")
-@click.option("--bypass-cache", is_flag=True, help="Skip cache lookup and force reprocessing")
-@click.option("--keep-cache", is_flag=True, help="Keep temporary cache directory after processing (for debugging)")
 @click.option("--target-language", help="Target language for translation")
 @click.option("--source-language", default="chinese", help="Source language for transcription")
 @click.option("--output-folder", help="Specify the output folder for the deck")
+@click.option("--skip-voice-isolation", is_flag=True, help="Skip the voice isolation step")
 @click.option(
     "--translation-provider",
     type=click.Choice(["openai", "deepl"], case_sensitive=False),
     default="openai",
     help="Translation service provider to use (OpenAI or DeepL)",
 )
+@click.option("--no-cache", is_flag=True, help="Disable using the persistent artifact cache")
+@click.option("--skip-cache-cleanup", is_flag=True, help="Skip cleaning up old items from the cache")
 def process(
     input_file: str,
     debug: bool = False,
-    bypass_cache: bool = False,
-    keep_cache: bool = False,
     target_language: str | None = None,
     source_language: str = "chinese",
     output_folder: str | None = None,
+    skip_voice_isolation: bool = False,
     translation_provider: str = "openai",
+    no_cache: bool = False,
+    skip_cache_cleanup: bool = False,
 ) -> None:
     """Process an audio/video file and generate Anki flashcards."""
     configure_logging(debug)
@@ -171,14 +190,17 @@ def process(
 
     translation_provider_enum = TranslationProvider.from_string(translation_provider)
 
+    # Translate source_language from a language name to a language code
+
     options = PipelineOptions(
-        target_language=target_language,
-        source_language=source_language,
-        bypass_cache=bypass_cache,
-        keep_cache=keep_cache,
+        source_language=language_name_to_code(source_language),
+        target_language=language_name_to_code(target_language),
         debug=debug,
         output_folder=resolved_output_path,
+        skip_voice_isolation=skip_voice_isolation,
         translation_provider=translation_provider_enum,
+        use_artifact_cache=not no_cache,
+        skip_cache_cleanup=skip_cache_cleanup,
     )
     deck_dir = str(run_pipeline(Path(input_file), console, options))
 
@@ -263,23 +285,106 @@ def reset():
             raise click.ClickException(message)
 
 
-# Cache-related commands have been removed as we now use a temporary directory for each run
+# Cache management commands
+@cli.group()
+def cache():
+    """Manage the artifact cache."""
+    pass
+
+
+@cache.command()
+def clear():
+    """Clear all items from the artifact cache."""
+    from . import artifact_cache
+
+    if click.confirm("Are you sure you want to clear the entire cache?"):
+        try:
+            files_removed, bytes_freed = artifact_cache.clear_cache()
+            if files_removed > 0:
+                console.print(f"[green]Removed {files_removed} files from cache.[/]")
+                console.print(f"[green]Freed up {format_size(bytes_freed)} of disk space.[/]")
+            else:
+                console.print("[yellow]No files were removed from the cache.[/]")
+        except Exception as e:
+            console.print(f"[red]Error clearing cache: {e}[/]")
+
+
+@cache.command()
+@click.option("--days", type=int, default=14, help="Remove items older than this many days")
+def cleanup(days: int):
+    """Remove old items from the artifact cache."""
+    from . import artifact_cache
+
+    try:
+        files_removed, bytes_freed = artifact_cache.clean_old_artifacts(days)
+        if files_removed > 0:
+            console.print(f"[green]Removed {files_removed} files from cache older than {days} days.[/]")
+            console.print(f"[green]Freed up {format_size(bytes_freed)} of disk space.[/]")
+        else:
+            console.print(f"[yellow]No files older than {days} days were found in the cache.[/]")
+    except Exception as e:
+        console.print(f"[red]Error cleaning up cache: {e}[/]")
+
+
+@cache.command(name="info")
+def cache_info():
+    """Display information about the artifact cache."""
+    from . import artifact_cache
+
+    try:
+        stats = artifact_cache.get_cache_stats()
+
+        console.print("\n[bold]Artifact Cache Information:[/]")
+        console.print(f"Location: {stats['cache_path']}")
+        console.print(f"Size: {stats['total_size_human']} ({stats['file_count']} files)")
+
+        if stats["oldest_artifact"]:
+            console.print(f"Oldest artifact: {stats['oldest_artifact']}")
+        if stats["newest_artifact"]:
+            console.print(f"Newest artifact: {stats['newest_artifact']}")
+
+        if stats["artifact_counts"]:
+            table = Table(title="Cached Artifacts by Type")
+            table.add_column("Artifact Type", style="cyan")
+            table.add_column("Count", style="magenta")
+
+            for name, count in stats["artifact_counts"].items():
+                table.add_row(name, str(count))
+
+            console.print(table)
+    except Exception as e:
+        console.print(f"[red]Error getting cache information: {e}[/]")
+
+
+def format_size(size_bytes: int) -> str:
+    """Convert bytes to a human-readable format."""
+    size = float(size_bytes)  # Convert to float for division
+    for unit in ["B", "KB", "MB", "GB"]:
+        if size < 1024 or unit == "GB":
+            return f"{size:.2f} {unit}"
+        size /= 1024
+    return f"{size:.2f} GB"  # Fallback return for completeness
 
 
 @cli.command()
 def paths() -> None:
-    """Show locations of configuration files."""
+    """Show locations of configuration files and cache."""
     configure_logging()
-    from . import config
+    from . import artifact_cache, config
 
+    # Get configuration paths
     paths = config.get_app_paths()
     console.print("\n[bold]Application Paths:[/]")
     for name, path in paths.items():
-        if name == "cache_dir":
-            continue  # Skip cache_dir since we now use temp directories
         exists = path.exists()
         status = "[green]exists[/]" if exists else "[yellow]not created yet[/]"
         console.print(f"  [cyan]{name}[/]: {path} ({status})")
+
+    # Get cache path
+    cache_dir = artifact_cache.get_cache_dir()
+    exists = cache_dir.exists()
+    status = "[green]exists[/]" if exists else "[yellow]not created yet[/]"
+    console.print(f"  [cyan]artifact_cache[/]: {cache_dir} ({status})")
     console.print()
 
 

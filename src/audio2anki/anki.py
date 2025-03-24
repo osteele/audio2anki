@@ -84,6 +84,14 @@ def get_anki_media_dir() -> Path:
         return home / ".local/share/Anki2/User 1/collection.media"
 
 
+def is_deck_folder(path: Path) -> bool:
+    """Check if a path is an existing Anki deck folder."""
+    deck_csv = path / "deck.csv"
+    deck_txt = path / "deck.txt"
+    media_dir = path / "media"
+    return path.exists() and deck_csv.exists() and deck_txt.exists() and media_dir.exists()
+
+
 def create_anki_deck(
     segments: list[AudioSegment],
     output_dir: Path,
@@ -101,8 +109,8 @@ def create_anki_deck(
         task_id: Progress bar task ID (optional)
         progress: Progress bar instance (optional)
         input_audio_file: Path to the original audio file (optional)
-        source_language: Source language (e.g. "chinese", "japanese")
-        target_language: Target language (e.g. "english", "french")
+        source_language: Source language (e.g. "zh", "ja")
+        target_language: Target language (e.g. "en", "fr")
 
     Returns:
         Path to the created deck directory
@@ -118,52 +126,66 @@ def create_anki_deck(
     if input_audio_file and progress and task_id:
         segments = split_audio(input_audio_file, segments, media_dir, task_id, progress)
 
-    # Create deck.txt file
-    deck_file = deck_dir / "deck.txt"
-    with open(deck_file, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f, delimiter="\t")
-        target_language_name = (target_language or "Translation").capitalize()
-        if source_language == "chinese":
-            columns = ["Hanzi", "Pinyin", target_language_name, "Audio"]
-        elif source_language == "japanese":
-            columns = ["Japanese", "Pronunciation", target_language_name, "Audio"]
-        else:
-            columns = ["Text", "Pronunciation", target_language_name, "Audio"]
-        writer.writerow(columns)
+    # Initialize columns based on language
+    target_language_name = (target_language or "Translation").capitalize()
+    if source_language == "zh":
+        columns = ["Hanzi", "Color", "Pinyin", target_language_name, "Audio"]
+    elif source_language == "ja":
+        columns = ["Japanese", "Pronunciation", target_language_name, "Audio"]
+    else:
+        columns = ["Text", "Pronunciation", target_language_name, "Audio"]
 
-        # Write segments
-        total = len(segments)
-        if progress and task_id:
-            progress.update(task_id, total=total)
+    def create_deck_file(file_path: Path, delimiter: str | None = None, add_anki_header: bool = False):
+        """Create a deck file with the given segments and columns.
 
-        for segment in segments:
-            writer.writerow(
-                [
-                    segment.text,
-                    segment.pronunciation or "",
-                    segment.translation or "",
-                    f"[sound:{segment.audio_file}]" if segment.audio_file else "",
-                ]
-            )
-            if progress and task_id:
-                progress.update(task_id, advance=1)
+        Args:
+            file_path: Path to the output file
+            delimiter: CSV delimiter to use (None for default, '\t' for TSV)
+            add_anki_header: Whether to add Anki-specific header lines
+        """
+        with open(file_path, "w", newline="", encoding="utf-8") as f:
+            # Add Anki-specific headers if needed
+            if add_anki_header:
+                f.write("#separator:tab\n")
+                f.write(f"#columns:{','.join(columns)}\n")
 
-    # Create deck.csv file
-    csv_file = deck_dir / "deck.csv"
-    with open(csv_file, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        # CSV header based on language
-        if source_language == "chinese":
-            writer.writerow(["Hanzi", "Pinyin", "English", "Audio"])
-        elif source_language == "japanese":
-            writer.writerow(["Japanese", "Pronunciation", "English", "Audio"])
-        else:
-            writer.writerow(["Text", "Pronunciation", "English", "Audio"])
+            # Create writer with appropriate delimiter
+            writer = csv.writer(f, delimiter=delimiter or ",")
+            writer.writerow(columns)
 
-        # Write segments to CSV
-        for segment in segments:
-            audio_path = f"media/{segment.audio_file}" if segment.audio_file else ""
-            writer.writerow([segment.text, segment.pronunciation or "", segment.translation or "", audio_path])
+            # Track progress if available
+            if progress and task_id and file_path.name == "deck.txt":  # Only track for first file
+                total = len(segments)
+                progress.update(task_id, total=total)
+
+            # Write all segments
+            for segment in segments:
+                # Create a dictionary with all possible fields
+                fields = {
+                    "Hanzi": segment.text,
+                    "Japanese": segment.text,
+                    "Text": segment.text,
+                    "Color": "",  # Empty color field
+                    "Pinyin": segment.pronunciation or "",
+                    "Pronunciation": segment.pronunciation or "",
+                    target_language_name: segment.translation or "",
+                    "English": segment.translation or "",
+                    "Audio": f"[sound:{segment.audio_file}]" if segment.audio_file else "",
+                }
+
+                # Use a list comprehension to create the row based on columns
+                row = [fields[column] for column in columns]
+                writer.writerow(row)
+
+                # Update progress for the first file only
+                if progress and task_id and file_path.name == "deck.txt":
+                    progress.update(task_id, advance=1)
+
+    # Create deck.txt file (tab-delimited with Anki headers)
+    create_deck_file(deck_dir / "deck.txt", delimiter="\t", add_anki_header=True)
+
+    # Create deck.csv file (comma-delimited without Anki headers)
+    create_deck_file(deck_dir / "deck.csv")
 
     # Copy the import_to_anki.sh script to the deck directory
     script_path = Path(__file__).parent / "resources" / "import_to_anki.sh"
@@ -211,30 +233,30 @@ def create_anki_deck(
 
 
 def generate_anki_deck(
-    input_data: str | Path,
+    segments_file: str | Path,
     progress: PipelineProgress,
     **kwargs: Any,
 ) -> Path:
     """Process deck generation stage in the pipeline.
 
     Args:
-        input_data: Path to the input file (transcript with audio files)
+        segments_file: Path to the segments JSON file containing transcriptions, translations, and pronunciations
         progress: Pipeline progress tracker
         **kwargs: Additional arguments passed from the pipeline
 
     Returns:
         Path to the generated deck directory
     """
-    from .transcribe import load_transcript
+    from .transcribe import load_transcript, load_transcript_json
 
     # Type assertion to handle the progress object correctly
     pipeline_progress = progress
     if not pipeline_progress:
         raise TypeError("Expected PipelineProgress object")
 
-    input_path = Path(input_data)
-    kwargs.get("input_audio_file")
-    kwargs.get("output_folder")
+    segments_path = Path(segments_file)
+    if not segments_path.exists():
+        raise FileNotFoundError(f"Segments file not found: {segments_path}")
 
     # Get the output path from kwargs
     deck_dir = kwargs.get("output_folder")
@@ -255,39 +277,49 @@ def generate_anki_deck(
 
         # If it's a deck folder, clean up any existing files
         if is_deck_folder:
+            import os
             import shutil
 
             for item in deck_dir.glob("*"):
-                if item.is_file():
-                    item.unlink()
+                if item.is_file() or item.is_symlink():
+                    os.unlink(item)
                 elif item.is_dir() and item.name != "anki_media":  # Keep the anki_media symlink
                     shutil.rmtree(item)
 
     # Create directory if it doesn't exist
     deck_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load segments from the translation file
-    translation_segments = load_transcript(input_path)
-    # Store translations before they get overwritten
-    for seg in translation_segments:
-        seg.translation = seg.text
+    # Check if the file is a JSON file
+    is_json = segments_path.suffix.lower() == ".json"
 
-    # Get transcription and pronunciation files from context
-    transcription_file = kwargs.get("transcription_file")
-    pronunciation_file = kwargs.get("pronunciation_file")
+    # Load segments - either from JSON or from legacy SRT files
+    if is_json:
+        # For JSON files, use the JSON loader which has all data
+        enriched_segments = load_transcript_json(segments_path)
+    else:
+        # For backward compatibility, handle SRT files
+        enriched_segments = load_transcript(segments_path)
 
-    # Load transcription and pronunciation if available
-    if transcription_file:
-        transcription_segments = load_transcript(Path(transcription_file))
-        # Update text from transcription
-        for t_seg, tr_seg in zip(transcription_segments, translation_segments, strict=True):
-            tr_seg.text = t_seg.text
+        # Store translations before they get overwritten
+        for seg in enriched_segments:
+            seg.translation = seg.text
 
-    if pronunciation_file:
-        pronunciation_segments = load_transcript(Path(pronunciation_file))
-        # Update pronunciation
-        for p_seg, tr_seg in zip(pronunciation_segments, translation_segments, strict=True):
-            tr_seg.pronunciation = p_seg.text
+        # Get transcription and pronunciation files from context
+        transcription_file = kwargs.get("transcription_file")
+        pronunciation_file = kwargs.get("pronunciation_file")
+
+        # Load transcription and pronunciation if available
+        if transcription_file:
+            transcription_segments = load_transcript(Path(transcription_file))
+            # Update text from transcription
+            for t_seg, tr_seg in zip(transcription_segments, enriched_segments, strict=True):
+                tr_seg.text = t_seg.text
+
+        if pronunciation_file:
+            pronunciation_segments = load_transcript(Path(pronunciation_file))
+            # Update pronunciation
+            for p_seg, tr_seg in zip(pronunciation_segments, enriched_segments, strict=True):
+                tr_seg.pronunciation = p_seg.text
 
     # Get the task ID for the current stage
     task_id = None
@@ -301,7 +333,7 @@ def generate_anki_deck(
 
     # Create the Anki deck
     deck_dir = create_anki_deck(
-        translation_segments,
+        enriched_segments,
         deck_dir,  # Use the specified output directory
         task_id,
         pipeline_progress.progress,

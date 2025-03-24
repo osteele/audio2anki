@@ -61,10 +61,47 @@ graph TD
 - Audio: mp3, wav, m4a, mp4 (audio extracted)
 - Transcript (optional): txt, srt
 
-### Output
+### Output Directory Structure
+The output directory for a deck is determined through the following process:
+
+1. When an output folder is specified via CLI:
+   a. First, resolve the path:
+      - For absolute paths: use as-is
+      - For relative paths: resolve relative to current working directory
+      This resolved path is called A.
+
+   b. Then, determine final output location:
+      - If A exists and is either **empty** or a valid **deck folder**: use A
+      - Otherwise: create path B = A/input_filename
+        (e.g., if A is "/path/to/output" and input is "lesson1.mp3", B becomes "/path/to/output/lesson1")
+      - If B exists and is neither **empty** nor a **deck folder**: exit with error
+
+2. When no output folder is specified:
+   - Create path A = "./decks/input_filename"
+     (e.g., for input "lesson1.mp3", creates "./decks/lesson1")
+   - If A exists and is neither **empty** nor a **deck folder**: exit with error
+
+Notes:
+
+**Empty** directory: Contains no files except common system metadata files:
+- macOS: `.DS_Store`, `.AppleDouble`, `.LSOverride`, `._*`
+- Windows: `Thumbs.db`, `ehthumbs.db`, `Desktop.ini`, `$RECYCLE.BIN`
+- Linux: `.directory`, `.Trash-*`
+- IDE/Editor: `.idea/`, `.vscode/`, `*.swp`, `.*.swp`, `*~`
+
+**Deck folder**: Contains only audio2anki-generated files:
+- deck.txt
+- CSV file
+- README
+- Script file
+- media directory
+
+The final output directory will contain:
+- Text file for Anki import
 - CSV file for Anki import
+- README.md
+- Script
 - Directory of audio snippets (mp3)
-- Debug log file (optional)
 
 ## Dependencies
 

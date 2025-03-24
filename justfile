@@ -2,7 +2,7 @@ default:
     @just --list
 
 # Run all checks (linting, type checking, and tests)
-check: lint test
+check: lint typecheck test
 
 # Format code
 format:
@@ -13,11 +13,15 @@ fix: format
 
 # Run linting
 lint:
-    uv run --dev pyright .
+    uv run --dev ruff check .
 
 # Run tests
 test *ARGS:
     uv run --dev python -m pytest tests/ {{ARGS}}
+
+# Run type checking
+typecheck:
+    uv run --dev pyright .
 
 # Install the package in development mode
 install:

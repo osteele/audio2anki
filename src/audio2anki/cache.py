@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Protocol
 
+# Use module-level logger
 logger = logging.getLogger(__name__)
 
 
@@ -13,6 +14,7 @@ class Cache(Protocol):
     """Protocol for cache implementations."""
 
     deck_path: Path | None
+    temp_dir: Path
 
     def get_path(self, artifact_name: str, extension: str) -> Path:
         """
@@ -172,6 +174,16 @@ def store_artifact(artifact_name: str, data: bytes, extension: str) -> Path:
 
 
 def cleanup_cache() -> None:
-    """Clean up the cache by removing the temporary directory."""
+    """
+    Clean up the cache by removing the temporary directory.
+
+    This function should always be called at the end of a pipeline run,
+    but will respect the keep_files flag set during initialization.
+    """
+    global _cache
     if _cache is not None:
-        _cache.cleanup()
+        try:
+            _cache.cleanup()
+        finally:
+            # Reset the cache reference to ensure it can be properly garbage collected
+            _cache = None

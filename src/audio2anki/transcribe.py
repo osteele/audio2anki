@@ -1,12 +1,23 @@
 """Transcription module using OpenAI API."""
 
+import hashlib
+import json
+import logging
 import os
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import TypedDict
 
 import httpx
 from openai import OpenAI
 from rich.progress import Progress, TaskID
+
+from .types import LanguageCode
+
+# Module logger
+logger = logging.getLogger(__name__)
+
+TRANSCRIPTION_MODEL = "whisper-1"
 
 
 @dataclass
@@ -75,9 +86,13 @@ def parse_srt(file: Path) -> list[TranscriptionSegment]:
 
 
 def load_transcript(file: Path) -> list[TranscriptionSegment]:
-    """Load transcript from file. Supports TSV or SRT based on file extension."""
+    """Load transcript from file. Supports TSV, SRT, or JSON based on file extension."""
     if file.suffix.lower() == ".srt":
         return parse_srt(file)
+    elif file.suffix.lower() == ".json":
+        return load_transcript_json(file)
+
+    # Default to TSV
     segments: list[TranscriptionSegment] = []
     with open(file) as f:
         for line in f:
@@ -92,19 +107,103 @@ def save_transcript(segments: list[TranscriptionSegment], file: Path) -> None:
     """Save transcript to file. If the file extension is .srt, format as SRT, otherwise TSV."""
     if file.suffix.lower() == ".srt":
         content = format_srt(segments)
+    elif file.suffix.lower() == ".json":
+        save_transcript_json(segments, file)
+        return  # JSON is handled separately
     else:
         content = "\n".join(f"{s.start}\t{s.end}\t{s.text}" for s in segments)
     with open(file, "w", encoding="utf-8") as f:
         f.write(content)
 
 
+def save_transcript_json(segments: list[TranscriptionSegment], file: Path) -> None:
+    """Save transcription segments with translations and pronunciations to a JSON file."""
+    # Convert each segment to a dictionary
+    segments_data = [asdict(segment) for segment in segments]
+
+    # Write to JSON file
+    with open(file, "w", encoding="utf-8") as f:
+        json.dump({"segments": segments_data}, f, ensure_ascii=False, indent=2)
+
+
+def load_transcript_json(file: Path) -> list[TranscriptionSegment]:
+    """Load transcription segments with translations and pronunciations from a JSON file."""
+    with open(file, encoding="utf-8") as f:
+        data = json.load(f)
+
+    # Convert dictionaries back to TranscriptionSegment objects
+    segments: list[TranscriptionSegment] = []
+    for segment_dict in data.get("segments", []):
+        segment = TranscriptionSegment(
+            start=segment_dict["start"],
+            end=segment_dict["end"],
+            text=segment_dict["text"],
+            translation=segment_dict.get("translation"),
+            pronunciation=segment_dict.get("pronunciation"),
+        )
+        segments.append(segment)
+
+    return segments
+
+
+class TranscriptionParams(TypedDict):
+    model: str
+    language: LanguageCode | None
+    prompt: str
+
+
+def get_transcription_version(source_language: LanguageCode | None = None) -> int:
+    """
+    Generate a version number for the transcription function based on its critical parameters.
+
+    This creates a hash of the model name, language, and the prompt, which will change
+    if any of these parameters change in the transcribe_audio function, ensuring cached
+    artifacts are invalidated appropriately.
+
+    Args:
+        language: Optional language code
+
+    Returns:
+        An integer version derived from the hash of parameters
+    """
+    model = TRANSCRIPTION_MODEL
+
+    # The prompt from the transcribe_audio function
+    prompt = """
+    Try to transcribe whole sentences as segments.
+    """
+
+    if source_language == "zh":
+        prompt += "请用简体。"
+    else:
+        prompt += "如果音档是中文的，请用简体。"
+    logger.debug(f"Using transcription prompt: {prompt}")
+
+    # Create a dictionary of parameters that affect the output
+    params: TranscriptionParams = {
+        "model": model,
+        "language": source_language,
+        "prompt": prompt,
+        # Add API version or other critical parameters here
+    }
+
+    # Create a stable string representation for hashing
+    param_str = json.dumps(params, sort_keys=True)
+
+    # Hash the parameters and convert to an integer
+    hash_obj = hashlib.sha256(param_str.encode())
+    # Use the first 8 bytes of the hash as an integer
+    version = abs(int.from_bytes(hash_obj.digest()[:4], byteorder="big"))
+
+    return version
+
+
 def transcribe_audio(
     audio_file: Path,
     transcript_path: Path,
-    model: str,
     task_id: TaskID | None = None,
     progress: Progress | None = None,
-    language: str | None = None,
+    language: LanguageCode | None = None,
     min_length: float | None = None,
     max_length: float | None = None,
 ) -> list[TranscriptionSegment]:
@@ -145,8 +244,9 @@ def transcribe_audio(
 
     if language == "zh":
         prompt += "请用简体。"
-    print(prompt)
+    logger.debug(f"Using transcription prompt: {prompt}")
 
+    model = TRANSCRIPTION_MODEL
     try:
         # Transcribe audio
         with open(audio_file, "rb") as f:

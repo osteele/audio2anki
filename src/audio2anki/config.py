@@ -16,9 +16,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONFIG: dict[str, Any] = {
     "clean_files": True,
     "use_cache": True,
-    "cache_expiry_days": 7,
+    "cache_expiry_days": 14,
     "voice_isolation_provider": "eleven_labs",
     "transcription_provider": "openai_whisper",
+    "use_artifact_cache": True,
+    "max_artifact_cache_size_mb": 2000,  # 2GB default limit
 }
 
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "audio2anki"
@@ -34,6 +36,8 @@ class Config:
     cache_expiry_days: int
     voice_isolation_provider: str
     transcription_provider: str
+    use_artifact_cache: bool
+    max_artifact_cache_size_mb: int
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Config":
@@ -44,6 +48,8 @@ class Config:
             cache_expiry_days=data["cache_expiry_days"],
             voice_isolation_provider=data["voice_isolation_provider"],
             transcription_provider=data["transcription_provider"],
+            use_artifact_cache=data.get("use_artifact_cache", True),
+            max_artifact_cache_size_mb=data.get("max_artifact_cache_size_mb", 2000),
         )
 
     def to_dict(self) -> dict[str, bool | int | str]:
@@ -54,6 +60,8 @@ class Config:
             "cache_expiry_days": self.cache_expiry_days,
             "voice_isolation_provider": self.voice_isolation_provider,
             "transcription_provider": self.transcription_provider,
+            "use_artifact_cache": self.use_artifact_cache,
+            "max_artifact_cache_size_mb": self.max_artifact_cache_size_mb,
         }
 
 
@@ -86,9 +94,12 @@ def create_default_config() -> None:
             f.write("# Audio-to-Anki Configuration\n\n")
             f.write("# Whether to clean up intermediate files\n")
             f.write("clean_files = true\n\n")
-            f.write("# Cache settings\n")
-            f.write("use_cache = true\n")
-            f.write("cache_expiry_days = 7\n\n")
+            f.write("# Temporary cache settings (per-run)\n")
+            f.write("use_cache = true\n\n")
+            f.write("# Artifact cache settings (persistent between runs)\n")
+            f.write("use_artifact_cache = true\n")
+            f.write("cache_expiry_days = 14\n")
+            f.write("max_artifact_cache_size_mb = 2000\n\n")
             f.write("# API providers\n")
             f.write('voice_isolation_provider = "eleven_labs"\n')
             f.write('transcription_provider = "openai_whisper"\n')
@@ -138,6 +149,10 @@ def validate_config(config: Config) -> list[str]:
     # Validate cache expiry days
     if config.cache_expiry_days < 1:
         errors.append("cache_expiry_days must be at least 1")
+
+    # Validate max cache size
+    if config.max_artifact_cache_size_mb < 100:
+        errors.append("max_artifact_cache_size_mb must be at least 100 MB")
 
     # Validate provider names
     valid_voice_providers = ["eleven_labs"]

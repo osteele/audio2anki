@@ -5,7 +5,7 @@ import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Protocol, TypeVar, cast, runtime_checkable
+from typing import Any, Protocol, TypeVar, runtime_checkable
 
 from rich.console import Console
 from rich.progress import (
@@ -18,9 +18,17 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 
+from audio2anki.transcribe import get_transcription_version
+from audio2anki.translate import get_translation_version
+from audio2anki.voice_isolation import get_voice_isolation_version
+
+from .transcoder import get_transcode_version
 from .translate import TranslationProvider
+from .types import LanguageCode
 
 T = TypeVar("T")
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -33,17 +41,83 @@ class PipelineFunction(Protocol):
     def __call__(self, context: "PipelineContext", **kwargs: Any) -> None: ...
 
 
+VersionType = int | str | Callable[..., int | str]
+
+
+def resolve_version(version: VersionType, context: "PipelineContext") -> int | str:
+    """
+    Resolve a version value that can be an integer, string, or function.
+
+    Args:
+        version: The version value to resolve
+        context: The pipeline context for function resolution
+
+    Returns:
+        The resolved version value (int or str)
+
+    Raises:
+        ValueError: If the version function requires arguments that aren't available in the context
+    """
+    if isinstance(version, int | str):
+        return version
+
+    # If it's a function, call it with context attributes
+    if callable(version):
+        # Get the function's parameter names
+        sig = inspect.signature(version)
+        params = sig.parameters
+
+        # Build kwargs from context attributes
+        kwargs: dict[str, Any] = {}
+        for param_name in params:
+            if param_name == "context":
+                kwargs[param_name] = context
+            elif hasattr(context, param_name):
+                kwargs[param_name] = getattr(context, param_name)
+            else:
+                raise ValueError(
+                    f"Version function {version.__name__} requires parameter '{param_name}' "
+                    f"which is not available in the pipeline context"
+                )
+
+        return version(**kwargs)
+
+    raise ValueError(f"Invalid version type: {type(version)}")
+
+
 def pipeline_function(**artifacts: dict[str, Any]) -> Callable[[Callable[..., None]], PipelineFunction]:
     """
     Decorator that annotates a pipeline function with the artifacts it produces.
+
     Example usage:
         @pipeline_function(transcript={"extension": "srt"})
         def transcribe(...): ...
+
+        @pipeline_function(translation={"extension": "srt", "cache": True, "version": 2})
+        def translate(...): ...
+
+        @pipeline_function(translation={"extension": "srt", "cache": True, "version": get_translation_version})
+        def translate(...): ...
+
+    Args:
+        **artifacts: Dictionary of artifact definitions. Each artifact can have these properties:
+            - extension: File extension for the artifact (required)
+            - cache: Whether to cache the artifact output (default: False)
+            - version: Version number/string/function for cache invalidation (default: 1)
+            - terminal: Whether this is a terminal artifact that shouldn't be cached (default: False)
     """
 
     def decorator(func: Callable[..., None]) -> PipelineFunction:
         # Store the artifact definitions
         func.produced_artifacts = artifacts  # type: ignore
+
+        # Set defaults for caching properties
+        for _artifact_name, artifact_def in artifacts.items():
+            if "cache" not in artifact_def:
+                artifact_def["cache"] = False
+            if "version" not in artifact_def:
+                artifact_def["version"] = 1
+
         return func  # type: ignore
 
     return decorator
@@ -53,13 +127,16 @@ def pipeline_function(**artifacts: dict[str, Any]) -> Callable[[Callable[..., No
 class PipelineOptions:
     """Options that control pipeline behavior."""
 
-    bypass_cache: bool = False
-    keep_cache: bool = False
     debug: bool = False
-    source_language: str = "chinese"
-    target_language: str | None = None
+    source_language: LanguageCode | None = None
+    target_language: LanguageCode | None = None
     output_folder: Path | None = None
+    skip_voice_isolation: bool = False
     translation_provider: TranslationProvider = TranslationProvider.OPENAI
+
+    # Caching options
+    use_artifact_cache: bool = True
+    skip_cache_cleanup: bool = False
 
 
 @dataclass
@@ -138,8 +215,8 @@ class PipelineContext:
     """Holds pipeline state and configuration."""
 
     progress: PipelineProgress
-    source_language: str = "chinese"
-    target_language: str | None = None
+    source_language: LanguageCode | None = None
+    target_language: LanguageCode | None = None
     output_folder: Path | None = None
     translation_provider: TranslationProvider = TranslationProvider.OPENAI
     _current_fn: PipelineFunction | None = None
@@ -211,7 +288,12 @@ class PipelineContext:
         from . import cache
 
         # Get the cache path using just the artifact name
-        return cache.get_artifact_path(artifact_name, extension)
+        artifact_path = cache.get_artifact_path(artifact_name, extension)
+
+        # Log the artifact path at debug level
+        logger.debug(f"{artifact_name} artifact will be stored at {artifact_path}")
+
+        return artifact_path
 
     def retrieve_from_cache(self, artifact_name: str) -> Path | None:
         """
@@ -237,6 +319,7 @@ class PipelineContext:
 
         # Check if the file exists
         if cache_path.exists():
+            logger.debug(f"Found cached {artifact_name} at {cache_path}")
             return cache_path
 
         return None
@@ -271,14 +354,18 @@ class PipelineContext:
 
         # Read and store the file data
         with open(output_path, "rb") as f:
-            cache.store_artifact(artifact_name, f.read(), extension)
+            stored_path = cache.store_artifact(artifact_name, f.read(), extension)
+            logger.debug(f"Storing {artifact_name} in cache at {stored_path}")
 
     @property
-    def stage_task_id(self) -> TaskID | None:
+    def stage_task_id(self) -> TaskID:
         """Get the task ID for the current stage."""
         if not self._current_fn:
-            return None
-        return self.progress.stage_tasks.get(self._current_fn.__name__)
+            raise ValueError("No current pipeline function")
+        task_id = self.progress.stage_tasks.get(self._current_fn.__name__)
+        if task_id is None:
+            raise ValueError("No task ID available for stage")
+        return task_id
 
 
 def validate_pipeline(pipeline: Sequence[PipelineFunctionType], initial_artifacts: dict[str, Any]) -> None:
@@ -334,8 +421,11 @@ class PipelineRunner:
         )
         context.set_input_file(input_file)
 
-        # Define pipeline stages
-        pipeline = [transcode, voice_isolation, transcribe, translate, generate_deck]
+        # Define pipeline stages, optionally skipping voice isolation
+        pipeline = [transcode]
+        if not options.skip_voice_isolation:
+            pipeline.append(voice_isolation)
+        pipeline.extend([transcribe, translate, generate_deck])
         initial_artifacts = {"input_path": input_file}
 
         return cls(
@@ -348,14 +438,15 @@ class PipelineRunner:
 
     def should_use_cache(self, func: PipelineFunctionType) -> bool:
         """Determine if caching should be used for this function."""
-        if self.options.bypass_cache:
-            return False
-
         # Check if this is a terminal stage that should bypass cache
         if isinstance(func, PipelineFunction) and hasattr(func, "produced_artifacts"):
             for artifact_info in func.produced_artifacts.values():
                 if artifact_info.get("terminal", False):
                     return False
+
+        # Check if artifact caching is disabled globally
+        if not self.options.use_artifact_cache:
+            return False
 
         return True
 
@@ -444,14 +535,21 @@ class PipelineRunner:
         self.update_input_tracking(func, stage_context, kwargs)
 
         # Check if we should use cache
-        use_cache = self.should_use_cache(func)
+        use_cache = self.should_use_cache(func) and self.options.use_artifact_cache
 
         # Try to get cached artifacts if appropriate
         cache_hit = False
         artifact_paths: dict[str, Path] = {}
 
-        if use_cache:
-            cache_hit, artifact_paths = self.get_cached_artifacts(func)
+        if use_cache and isinstance(func, PipelineFunction) and hasattr(func, "produced_artifacts"):
+            cache_hit, artifact_paths = self.check_persistent_cache(func, kwargs)
+
+            if not cache_hit:
+                # Fall back to temp cache if persistent cache misses
+                temp_cache_hit, temp_artifact_paths = self.get_cached_artifacts(func)
+                if temp_cache_hit:
+                    cache_hit = True
+                    artifact_paths = temp_artifact_paths
 
         # Run the function if needed
         if not use_cache or not cache_hit:
@@ -462,6 +560,10 @@ class PipelineRunner:
             if use_cache:
                 self.store_artifacts_in_cache(func, stage_context)
 
+                # Also store in persistent cache if configured
+                if isinstance(func, PipelineFunction) and hasattr(func, "produced_artifacts"):
+                    self.store_in_persistent_cache(func, stage_context, kwargs)
+
             # Update artifacts with paths from generated files
             if isinstance(func, PipelineFunction) and hasattr(func, "produced_artifacts"):
                 generated_paths: dict[str, Path] = {}
@@ -470,11 +572,137 @@ class PipelineRunner:
                     generated_paths[artifact_name] = artifact_path
                 self.update_artifacts(func, generated_paths)
         else:
-            self.console.print(f"[green]Using cached result for {func.__name__}[/]")
+            # Log cache hit at debug level - use logging module directly to avoid scope issues
+            logger.debug(f"Using cached result for {func.__name__}")
+            if self.options.debug:
+                self.console.print(f"[green]Using cached result for {func.__name__}[/]")
             # Update artifacts with paths from cache
             self.update_artifacts(func, artifact_paths)
 
         self.context.progress.complete_stage()
+
+    def check_persistent_cache(self, func: PipelineFunction, kwargs: dict[str, Any]) -> tuple[bool, dict[str, Path]]:
+        """
+        Check for cached artifacts in the persistent cache.
+
+        Args:
+            func: The pipeline function
+            kwargs: The function arguments
+
+        Returns:
+            Tuple of (cache hit, artifact paths dict)
+        """
+        from . import artifact_cache
+
+        func_name = func.__name__
+        logger.debug(f"Checking persistent cache for function: {func_name}")
+        logger.debug(f"Function kwargs: {list(kwargs.keys())}")
+
+        # Resolve any path arguments to absolute paths for consistent caching
+        normalized_kwargs = {}
+        for k, v in kwargs.items():
+            if isinstance(v, Path):
+                try:
+                    normalized_kwargs[k] = v.resolve()
+                    if str(v) != str(normalized_kwargs[k]):  # type: ignore
+                        logger.debug(f"Normalized path {k}: {v} -> {normalized_kwargs[k]}")
+                except Exception:
+                    normalized_kwargs[k] = v
+            else:
+                normalized_kwargs[k] = v
+
+        # Use normalized kwargs from this point on
+        kwargs = normalized_kwargs
+
+        artifact_paths: dict[str, Path] = {}
+        all_found = True
+
+        # Check if all artifacts for this function are in the cache
+        for artifact_name, artifact_def in func.produced_artifacts.items():
+            if not artifact_def.get("cache", False):
+                logger.debug(f"Artifact '{artifact_name}' has caching disabled")
+                continue
+
+            # Resolve the version value
+            version = resolve_version(artifact_def.get("version", 1), self.context)
+            # Convert version to int for cache compatibility
+            version_int = int(str(version))
+            extension = artifact_def.get("extension", "mp3")
+
+            logger.debug(f"Looking for cached artifact '{artifact_name}' with version {version}")
+
+            cached_path, cache_hit = artifact_cache.get_cached_artifact(artifact_name, version_int, kwargs, extension)
+
+            if cache_hit and cached_path:
+                logger.debug(f"✅ Cache HIT for '{artifact_name}' at {cached_path}")
+                artifact_paths[artifact_name] = cached_path
+            else:
+                logger.debug(f"❌ Cache MISS for '{artifact_name}'")
+                all_found = False
+                break
+
+        result = all_found and bool(artifact_paths)
+        logger.debug(f"Overall cache {'✅ HIT' if result else '❌ MISS'} for {func_name}")
+
+        # Only return success if all artifacts were found
+        return result, artifact_paths
+
+    def store_in_persistent_cache(
+        self, func: PipelineFunction, context: PipelineContext, kwargs: dict[str, Any]
+    ) -> None:
+        """
+        Store all artifacts produced by this function in the persistent cache.
+
+        Args:
+            func: The pipeline function
+            context: The pipeline context
+            kwargs: The function arguments used
+        """
+        from . import artifact_cache
+
+        func_name = func.__name__
+        logger.debug(f"Storing artifacts in persistent cache for function: {func_name}")
+
+        # Normalize any path arguments for consistent caching
+        normalized_kwargs = {}
+        for k, v in kwargs.items():
+            if isinstance(v, Path):
+                try:
+                    normalized_kwargs[k] = v.resolve()
+                except Exception:
+                    normalized_kwargs[k] = v
+            else:
+                normalized_kwargs[k] = v
+
+        # Use normalized kwargs from this point on
+        kwargs = normalized_kwargs
+
+        for artifact_name, artifact_def in func.produced_artifacts.items():
+            if not artifact_def.get("cache", False):
+                logger.debug(f"Skipping cache storage for '{artifact_name}' (caching disabled)")
+                continue
+
+            # Resolve the version value
+            version = resolve_version(artifact_def.get("version", 1), self.context)
+            # Convert version to int for cache compatibility
+            version_int = int(str(version))
+            extension = artifact_def.get("extension", "mp3")
+
+            artifact_path = context.get_artifact_path(artifact_name)
+            logger.debug(f"Checking if artifact exists at {artifact_path}")
+
+            if artifact_path.exists():
+                try:
+                    stored_path = artifact_cache.store_artifact(
+                        artifact_name, version_int, kwargs, artifact_path, extension
+                    )
+                    logger.debug(
+                        f"✅ Stored '{artifact_name}' in persistent cache (version {version}) at {stored_path}"
+                    )
+                except Exception as e:
+                    logger.warning(f"❌ Failed to store '{artifact_name}' in persistent cache: {e}")
+            else:
+                logger.warning(f"❌ Cannot store '{artifact_name}' in cache - file does not exist at {artifact_path}")
 
     def run(self) -> Path:
         """Run the entire pipeline and return the final artifact path."""
@@ -512,8 +740,6 @@ class PipelineRunner:
                 raise ValueError("Pipeline completed but no deck artifact was produced")
 
         except Exception as e:
-            logging.error(f"Pipeline failed: {str(e)}")
-            self.console.print(f"[red]Error: {str(e)}[/]")
             raise RuntimeError(f"Pipeline failed: {str(e)}") from e
 
 
@@ -523,11 +749,24 @@ def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -
     Returns:
         Path: The path to the generated deck directory
     """
-    from . import cache
+    from . import artifact_cache, cache
+    from .utils import format_bytes
 
-    # Initialize a new temporary cache with keep_files option
-    cache.init_cache(keep_files=options.keep_cache)
-    logging.info("Initialized temporary cache")
+    # Clean up old artifacts in the persistent cache if enabled
+    if options.use_artifact_cache and not options.skip_cache_cleanup:
+        try:
+            files_removed, bytes_freed = artifact_cache.clean_old_artifacts(days=14)
+            if files_removed > 0:
+                readable_size = format_bytes(bytes_freed)
+                logger.info(f"Cleaned {files_removed} old artifacts from cache ({readable_size})")
+        except Exception as e:
+            logger.warning(f"Error cleaning up old cache artifacts: {e}")
+
+    # Initialize a new temporary cache for this run
+    cache.init_cache(keep_files=options.debug)
+    cache_dir = cache.get_cache().temp_dir
+    logger.info(f"Initialized temporary cache at {cache_dir}")
+    logger.debug(f"Cache directory location: {cache_dir}")
 
     try:
         with PipelineProgress.create(console) as progress:
@@ -539,12 +778,23 @@ def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -
             result = runner.run()
             return result
     finally:
-        # Clean up cache unless keep_cache is True
-        if not options.keep_cache:
-            cache.cleanup_cache()
+        cache_dir = cache.get_cache().temp_dir
+
+        # In debug mode, preserve files and log location
+        if options.debug:
+            logger.debug(f"Intermediate files are preserved in cache directory: {cache_dir}")
+
+        # In non-debug mode, always clean up regardless of how we exit
+        else:
+            logger.debug("Cleaning up cache directory")
+            try:
+                cache.cleanup_cache()
+            except Exception as e:
+                # Log cleanup errors but don't raise - we're in finally block
+                logger.warning(f"Error cleaning up cache: {e}")
 
 
-@pipeline_function(transcode={"extension": "mp3"})
+@pipeline_function(transcode={"extension": "mp3", "cache": True, "version": get_transcode_version})
 def transcode(context: PipelineContext, input_path: Path) -> None:
     """Transcode an audio/video file to an audio file suitable for processing."""
     from .transcoder import transcode_audio
@@ -553,69 +803,46 @@ def transcode(context: PipelineContext, input_path: Path) -> None:
     transcode_audio(input_path, output_path, progress_callback=context.progress.update_progress)
 
 
-@pipeline_function(voice_isolation={"extension": "mp3"})
+@pipeline_function(voice_isolation={"extension": "mp3", "cache": True, "version": get_voice_isolation_version})
 def voice_isolation(context: PipelineContext, transcode: Path) -> None:
     """Isolate voice from background noise."""
     from .voice_isolation import isolate_voice
 
-    # Get the output path from context
     output_path = context.get_artifact_path()
-
-    # Use context's progress update method directly
     isolate_voice(transcode, output_path, progress_callback=context.progress.update_progress)
 
 
-@pipeline_function(transcribe={"extension": "srt"})
-def transcribe(context: PipelineContext, voice_isolation: Path) -> None:
-    """Transcribe the audio file using OpenAI Whisper and produce an SRT file."""
+@pipeline_function(transcribe={"extension": "srt", "cache": True, "version": get_transcription_version})
+def transcribe(context: PipelineContext, voice_isolation: Path | None = None, transcode: Path | None = None) -> None:
+    """Transcribe audio to text."""
     from .transcribe import transcribe_audio
 
-    # Map full language names to Whisper codes
-    language_codes = {
-        "chinese": "zh",
-        "japanese": "ja",
-        "korean": "ko",
-        "english": "en",
-        "french": "fr",
-        "german": "de",
-        "spanish": "es",
-        "italian": "it",
-        "portuguese": "pt",
-        "russian": "ru",
-    }
+    # Use voice-isolated audio if available, otherwise use transcoded audio
+    input_path = voice_isolation or transcode
+    if not input_path:
+        raise ValueError("No input audio file available for transcription")
 
-    language_code = language_codes.get(context.source_language.lower())
-
-    # Get the output path from context
-    output_path = context.get_artifact_path()
-
-    # Call transcribe_audio with the output path
     transcribe_audio(
-        audio_file=voice_isolation,
-        transcript_path=output_path,
-        model="whisper-1",
+        audio_file=input_path,
+        transcript_path=context.get_artifact_path(),
         task_id=context.stage_task_id,
         progress=context.progress.progress,
-        language=language_code,
+        language=context.source_language,
     )
 
 
-@pipeline_function(translation={"extension": "srt"}, pronunciation={"extension": "srt"})
+@pipeline_function(segments={"extension": "json", "cache": True, "version": get_translation_version})
 def translate(context: PipelineContext, transcribe: Path) -> None:
-    """Translate the SRT file to English and create pinyin if needed."""
-    from .translate import translate_srt
+    """Translate transcribed text to target language."""
+    from .translate import translate_segments_to_json
 
-    translation_path = context.get_artifact_path("translation")
-    pronunciation_path = context.get_artifact_path("pronunciation")
-
-    translate_srt(
+    translate_segments_to_json(
         input_file=transcribe,
-        target_language=context.target_language or "english",
-        task_id=cast(TaskID, context.stage_task_id),
+        output_file=context.get_artifact_path("segments"),
+        target_language=context.target_language or "en",
+        task_id=context.stage_task_id,
         progress=context.progress.progress,
         source_language=context.source_language,
-        translation_output=translation_path,
-        pronunciation_output=pronunciation_path,
         translation_provider=context.translation_provider,
     )
 
@@ -623,31 +850,29 @@ def translate(context: PipelineContext, transcribe: Path) -> None:
 @pipeline_function(deck={"extension": "directory", "terminal": True})
 def generate_deck(
     context: PipelineContext,
-    voice_isolation: Path,
-    transcribe: Path,
-    translation: Path,
-    pronunciation: Path | None,
+    segments: Path,
+    translation: Path | None = None,
+    transcribe: Path | None = None,
+    pronunciation: Path | None = None,
+    voice_isolation: Path | None = None,
+    transcode: Path | None = None,
 ) -> None:
-    """Generate an Anki flashcard deck from the processed data."""
+    """Generate Anki deck from translated segments."""
     from .anki import generate_anki_deck
 
-    # Use the output folder from context if provided, otherwise use cwd
-    output_path = context.output_folder if context.output_folder else Path.cwd()
+    # Get the input audio file path
+    input_audio = voice_isolation or transcode
+    if not input_audio:
+        raise ValueError("No input audio file available for deck generation")
 
-    # Generate the Anki deck
-    deck_dir = generate_anki_deck(
-        input_data=translation,  # translation file contains the main content
-        input_audio_file=voice_isolation,
+    generate_anki_deck(
+        segments_file=segments,
+        input_audio_file=input_audio,
         transcription_file=transcribe,
+        translation_file=translation,
         pronunciation_file=pronunciation,
         source_language=context.source_language,
-        target_language=context.target_language,
+        target_language=context.target_language or "english",
         task_id=context.stage_task_id,
         progress=context.progress,
-        output_folder=output_path,
     )
-
-    # Store the actual deck path in the artifacts dictionary for the PipelineRunner to use
-    from .cache import get_cache
-
-    get_cache().deck_path = deck_dir

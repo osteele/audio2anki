@@ -28,6 +28,11 @@ class VoiceIsolationError(Exception):
         return f"Voice Isolation Error{cause_str}: {self.error_message}"
 
 
+def get_voice_isolation_version() -> int:
+    """Get the version of the voice isolation function."""
+    return 1
+
+
 def _call_elevenlabs_api(input_path: Path, progress_callback: Callable[[float], None]) -> Path:
     """
     Call Eleven Labs API to isolate voice from background noise.
