@@ -207,26 +207,10 @@ def process(
     # Print deck location and instructions
     console.print(f"\n[green]Deck created at:[/] {deck_dir}")
 
-    # Read and render README content
+    # Direct user to the README.md file instead of printing it
     readme_path = Path(deck_dir) / "README.md"
     if readme_path.exists():
-        content = readme_path.read_text(encoding="utf-8")
-
-        # Replace "symbolic link" with platform-specific term
-        import platform
-
-        alias_term = (
-            "alias"
-            if platform.system() == "Darwin"
-            else "shortcut"
-            if platform.system() == "Windows"
-            else "symbolic link"
-        )
-        content = content.replace("symbolic link", alias_term)
-
-        # Render markdown content with left-aligned headers
-        md = LeftAlignedMarkdown(content)
-        console.print(md)
+        console.print(f"[green]See[/] {readme_path} [green]for instructions on how to import the deck into Anki.[/]")
 
 
 @cli.group()

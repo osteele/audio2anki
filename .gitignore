@@ -1,0 +1,21 @@
+# Python ignores
+__pycache__
+*.py[cod]
+
+# macOS
+.DS_Store
+Icon?
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN
+
+# Linux
+.directory
+.Trash-*
+
+
+# App output
+/decks

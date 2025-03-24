@@ -24,28 +24,27 @@ The pipeline is implemented as a sequence of Python functions, where each functi
 - **Type Safety:** Comprehensive type hints throughout the codebase
 - **Progress Tracking:** Integrated progress reporting for each pipeline stage
 - **Error Handling:** Clear error messages when required artifacts are missing
+- **Caching:** Two-level caching system with both temporary and persistent caches
 
 ## Pipeline Operations
 
 Each operation in the pipeline has the following structure:
 
 ```python
-@produces_artifacts(output_name={"extension": "mp3"})  # Optional: declare artifact name and properties
+@pipeline_function(output_name={"extension": "mp3", "cache": True, "version": get_version})
 def operation_name(
     context: PipelineContext,
     required_artifact1: Path,  # Name matches a previous stage's artifact name
-    optional_param: int | None = None,
+    optional_param: Path | None = None,
 ) -> None:
     """Process artifacts.
-    
+
     Args:
         context: Pipeline-wide configuration and progress
         required_artifact1: Required input artifact
         optional_param: Optional configuration
     """
 ```
-
-If a function is not decorated with `@produces_artifacts`, it produces a single artifact named after the function.
 
 ### Core Components
 
@@ -55,130 +54,114 @@ If a function is not decorated with `@produces_artifacts`, it produces a single 
    class PipelineContext:
        """Holds pipeline state and configuration."""
        progress: PipelineProgress
-       source_language: str = "chinese"
-       target_language: str | None = None
-       _artifacts: dict[str, dict[str, Any]]  # Maps artifact names to their properties
+       source_language: LanguageCode | None = None
+       target_language: LanguageCode | None = None
+       output_folder: Path | None = None
+       translation_provider: TranslationProvider = TranslationProvider.OPENAI
+       _current_fn: PipelineFunction | None = None
+       _input_file: Path | None = None
+       _stage_inputs: dict[str, Path] = field(default_factory=dict)
+       _artifacts: dict[str, dict[str, Any]] = field(default_factory=dict)
    ```
 
-2. **Pipeline Runner:**
-   - Manages the execution of pipeline stages
-   - Tracks artifacts in a dictionary keyed by artifact name
-   - Validates artifact availability before execution
-   - Handles errors and progress reporting
-
-3. **Pipeline Validation:**
+2. **Pipeline Options:**
    ```python
-   def validate_pipeline(
-       pipeline: list[PipelineFunction],
-       initial_artifacts: dict[str, Any]
-   ) -> None:
-       """Validate that all required artifacts will be available."""
+   @dataclass
+   class PipelineOptions:
+       """Options that control pipeline behavior."""
+       debug: bool = False
+       source_language: LanguageCode | None = None
+       target_language: LanguageCode | None = None
+       output_folder: Path | None = None
+       skip_voice_isolation: bool = False
+       translation_provider: TranslationProvider = TranslationProvider.OPENAI
+       use_artifact_cache: bool = True
+       skip_cache_cleanup: bool = False
    ```
 
-### Artifact Naming and Temporary Caching
-
-- Each artifact has a unique name, either:
-  - Specified in the `@pipeline_function` decorator, or
-  - Defaulting to the function name if not decorated
-- Each pipeline stage specifies the names of its input artifacts through parameter names (other than `context`)
-- For each pipeline run, a temporary directory is created to store all artifacts
-- The artifact filename has the simple format `{artifact_name}.{extension}`, where:
-  - `artifact_name` is the name of the artifact produced by the pipeline stage
-- Each pipeline function can produce one or more artifacts
-- Artifacts are referenced by name in subsequent pipeline stages' parameters
-- The temporary directory is automatically cleaned up after the pipeline completes, unless the `keep_cache` option is specified
-
-### Example Pipeline
-
-```python
-@produces_artifacts(voice_only={"extension": "mp3"})
-def voice_isolation(context: PipelineContext, transcode: Path) -> None:
-    """Isolate voice from background noise."""
-    output_path = context.get_artifact_path("voice_only")
-    # Process audio...
-
-@produces_artifacts(
-    transcript={"extension": "srt"},
-    timestamps={"extension": "json"}
-)
-def transcribe(context: PipelineContext, voice_only: Path) -> None:
-    """Transcribe audio and produce transcript with timestamps."""
-    transcript_path = context.get_artifact_path("transcript")
-    timestamps_path = context.get_artifact_path("timestamps")
-    # Generate transcript...
-```
-
-### Caching Behavior
-
-- Artifacts are stored in a temporary directory created for each pipeline run
-- Each artifact is stored with a simple filename based on the artifact name
-- The temporary directory is deleted after the pipeline completes unless the `keep_cache` option is set
-- Processing modules don't handle caching; they always process their inputs
-- Intermediate files within a stage should use the temporary directory
-- Cache lookup strategy:
-  1. Check if the artifact already exists in the temporary directory
-  2. If found, use the existing artifact instead of reprocessing
-  3. If not found, process the stage and store the result in the temporary directory
-
-## Detailed Operations
-
-1. **Audio Channel Transcoding:**
+3. **Progress Tracking:**
    ```python
-   def transcode(context: PipelineContext, input_path: Path) -> None:
-       """Transcode an audio/video file to an audio file."""
+   @dataclass
+   class PipelineProgress:
+       """Manages progress tracking for the pipeline and its stages."""
+       progress: Progress  # rich.progress.Progress
+       pipeline_task: TaskID
+       console: Console
+       current_stage: str | None = None
+       stage_tasks: dict[str, TaskID] = field(default_factory=dict)
+   ```
+
+### Caching System
+
+The pipeline implements a two-level caching system:
+
+1. **Temporary Cache:**
+   - Created fresh for each pipeline run
+   - Stores intermediate artifacts during processing
+   - Cleaned up after pipeline completion unless debug mode is enabled
+   - Uses simple filenames based on artifact names
+
+2. **Persistent Cache:**
+   - Stores artifacts across pipeline runs
+   - Version-aware to handle algorithm updates
+   - Supports cache invalidation based on input changes
+   - Automatically cleans up old artifacts (default: 14 days)
+   - Configurable through artifact decorators:
+     ```python
+     @pipeline_function(
+         artifact_name={
+             "extension": "mp3",
+             "cache": True,
+             "version": get_version_function,
+             "terminal": False
+         }
+     )
+     ```
+
+### Pipeline Stages
+
+The standard pipeline includes these stages:
+
+1. **Audio Transcoding:**
+   ```python
+   @pipeline_function(transcode={"extension": "mp3", "cache": True, "version": get_transcode_version})
+   def transcode(context: PipelineContext, input_path: Path) -> None
    ```
 
 2. **Voice Isolation:**
    ```python
-   def voice_isolation(context: PipelineContext, transcode: Path) -> None:
-       """Isolate voice from background noise."""
+   @pipeline_function(voice_isolation={"extension": "mp3", "cache": True, "version": get_voice_isolation_version})
+   def voice_isolation(context: PipelineContext, transcode: Path) -> None
    ```
 
 3. **Transcription:**
    ```python
-   def transcribe(context: PipelineContext, voice_isolation: Path) -> None:
-       """Transcribe audio to text and produce an SRT file."""
+   @pipeline_function(transcribe={"extension": "srt", "cache": True, "version": get_transcription_version})
+   def transcribe(context: PipelineContext, voice_isolation: Path | None = None, transcode: Path | None = None) -> None
    ```
 
 4. **Translation:**
    ```python
-   def translate(context: PipelineContext, transcribe: Path) -> None:
-       """Translate text and generate pronunciation guide."""
+   @pipeline_function(segments={"extension": "json", "cache": True, "version": get_translation_version})
+   def translate(context: PipelineContext, transcribe: Path) -> None
    ```
 
-5. **Card Deck Generation:**
+5. **Deck Generation:**
    ```python
-   def generate_deck(
-       context: PipelineContext,
-       voice_isolation: Path,
-       transcribe: Path,
-       translation_path: Path,
-       pronunciation_path: Path,
-   ) -> None:
-       """Generate Anki flashcard deck."""
+   @pipeline_function(deck={"extension": "directory", "terminal": True})
+   def generate_deck(context: PipelineContext, segments: Path, ...) -> None
    ```
 
-## Progress Tracking
-
-Progress tracking is integrated into the pipeline through the `PipelineProgress` class:
-- Each stage automatically gets progress tracking based on its function name
-- Progress updates are accessible through the context object
-- Supports both overall pipeline progress and individual stage progress
-
-## Error Handling
+### Error Handling
 
 The pipeline includes several layers of error handling:
 1. **Static Validation:** Catches missing artifact errors before execution
 2. **Runtime Errors:** Each stage has specific error handling
 3. **Progress Updates:** Error states are reflected in progress tracking
-
-## CLI Integration
-
-The command-line interface provides:
-- Full pipeline execution
-- Individual stage execution
-- Progress display
-- Error reporting
+4. **Error Classification:**
+   - `SYSTEM_ERROR`: General system errors
+   - `SERVICE_ERROR`: Network/service connection issues
+   - `VALIDATION_ERROR`: Input validation failures
 
 ## Testing
 
