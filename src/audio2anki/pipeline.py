@@ -833,7 +833,7 @@ def translate(context: PipelineContext, transcribe: Path) -> None:
     translate_segments_to_json(
         input_file=transcribe,
         output_file=context.get_artifact_path("segments"),
-        target_language=context.target_language or "en",
+        target_language=context.target_language or LanguageCode("en"),
         task_id=context.stage_task_id,
         progress=context.progress.progress,
         source_language=context.source_language,

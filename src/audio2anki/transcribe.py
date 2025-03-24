@@ -19,6 +19,9 @@ logger = logging.getLogger(__name__)
 
 TRANSCRIPTION_MODEL = "whisper-1"
 
+# Max file size (25MB = 25 * 1024 * 1024 bytes)
+MAX_FILE_SIZE = 25 * 1024 * 1024
+
 
 @dataclass
 class TranscriptionSegment:
@@ -226,6 +229,10 @@ def transcribe_audio(
         ValueError: If OPENAI_API_KEY is not set or if the response is invalid
         RuntimeError: If transcription fails
     """
+    # Check file size (25MB = 25 * 1024 * 1024 bytes)
+    if audio_file.stat().st_size > MAX_FILE_SIZE:
+        raise ValueError(f"Audio file {audio_file} exceeds 25MB limit")
+
     # Check for API key
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:

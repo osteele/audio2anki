@@ -7,15 +7,18 @@ import shutil
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, TypeAlias, TypedDict
 
 from pydub import AudioSegment
 
 logger = logging.getLogger(__name__)
 
+# OpenAI input formats
+AudioFormat: TypeAlias = Literal["mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm"]
+
 
 class TranscodingParams(TypedDict):
-    target_format: Literal["mp3"]
+    target_format: AudioFormat
     target_channels: int
     target_sample_rate: int
     target_bitrate: str
@@ -24,10 +27,10 @@ class TranscodingParams(TypedDict):
 
 # Default transcoding parameters - used by both the transcoding function and version calculation
 DEFAULT_TRANSCODING_PARAMS: TranscodingParams = {
-    "target_format": "mp3",
+    "target_format": "mp4",
     "target_channels": 1,
-    "target_sample_rate": 44100,
-    "target_bitrate": "128k",
+    "target_sample_rate": 16000,
+    "target_bitrate": "32k",
     "library_version": getattr(AudioSegment, "__version__", "1.0.0"),
 }
 
@@ -66,7 +69,7 @@ def transcode_audio(
     input_path: Path,
     output_path: Path,
     progress_callback: Callable[[float], None] | None = None,
-    target_format: Literal["mp3"] = DEFAULT_TRANSCODING_PARAMS["target_format"],
+    target_format: AudioFormat = DEFAULT_TRANSCODING_PARAMS["target_format"],
     target_channels: int = DEFAULT_TRANSCODING_PARAMS["target_channels"],
     target_sample_rate: int = DEFAULT_TRANSCODING_PARAMS["target_sample_rate"],
     target_bitrate: str = DEFAULT_TRANSCODING_PARAMS["target_bitrate"],

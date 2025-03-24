@@ -1,6 +1,7 @@
 """Audio processing module."""
 
 import hashlib
+from math import ceil, floor
 from pathlib import Path
 
 from pydub import AudioSegment as PydubSegment  # type: ignore
@@ -85,8 +86,8 @@ def split_audio(
     # Process each segment
     for segment in segments:
         # Extract segment audio
-        start_ms = int(segment.start * 1000)
-        end_ms = int(segment.end * 1000)
+        start_ms = floor(segment.start * 1000)
+        end_ms = ceil(segment.end * 1000)
         segment_audio = audio[start_ms:end_ms]
 
         # Trim silence
