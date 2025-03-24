@@ -83,7 +83,7 @@ def split_audio(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Process each segment
-    for i, segment in enumerate(segments):
+    for segment in segments:
         # Extract segment audio
         start_ms = int(segment.start * 1000)
         end_ms = int(segment.end * 1000)
@@ -93,7 +93,9 @@ def split_audio(
         segment_audio = trim_silence(segment_audio, silence_thresh=silence_thresh)
 
         # Export audio segment with hash in filename
-        filename = f"audio2anki_{file_hash}_{i + 1:03d}.mp3"
+        # Include hash of the Hanzi text to make filenames more unique
+        text_hash = hashlib.md5(segment.text.encode()).hexdigest()[:8]
+        filename = f"audio2anki_{file_hash}_{text_hash}.mp3"
         segment_path = output_dir / filename
         segment_audio.export(segment_path, format="mp3")
         segment.audio_file = filename

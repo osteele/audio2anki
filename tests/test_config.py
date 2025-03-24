@@ -72,9 +72,11 @@ def test_create_default_config(temp_config_dir: Path) -> None:
     assert config_path.exists()
     content = config_path.read_text()
     assert "clean_files = true" in content
-    assert "cache_expiry_days = 7" in content
+    assert "cache_expiry_days = 14" in content
     assert 'voice_isolation_provider = "eleven_labs"' in content
     assert 'transcription_provider = "openai_whisper"' in content
+    assert "use_artifact_cache = true" in content
+    assert "max_artifact_cache_size_mb = 2000" in content
 
 
 def test_load_config_with_file(temp_config_file: Path) -> None:
@@ -92,9 +94,11 @@ def test_load_config_no_file(temp_config_dir: Path) -> None:
     config = load_config()
     assert isinstance(config, Config)
     assert config.clean_files is True  # Default value
-    assert config.cache_expiry_days == 7  # Default value
+    assert config.cache_expiry_days == 14  # Default value
     assert config.voice_isolation_provider == "eleven_labs"
     assert config.transcription_provider == "openai_whisper"
+    assert config.use_artifact_cache is True
+    assert config.max_artifact_cache_size_mb == 2000
 
 
 def test_load_config_invalid_file(temp_config_dir: Path) -> None:
@@ -107,7 +111,9 @@ def test_load_config_invalid_file(temp_config_dir: Path) -> None:
     assert isinstance(config, Config)
     # Should fall back to defaults
     assert config.clean_files is True
-    assert config.cache_expiry_days == 7
+    assert config.cache_expiry_days == 14
+    assert config.use_artifact_cache is True
+    assert config.max_artifact_cache_size_mb == 2000
 
 
 def test_config_validation_valid() -> None:
@@ -118,6 +124,8 @@ def test_config_validation_valid() -> None:
         cache_expiry_days=7,
         voice_isolation_provider="eleven_labs",
         transcription_provider="openai_whisper",
+        use_artifact_cache=True,
+        max_artifact_cache_size_mb=2000,
     )
     errors = validate_config(config)
     assert not errors
@@ -131,9 +139,11 @@ def test_config_validation_invalid() -> None:
         cache_expiry_days=0,  # Invalid value
         voice_isolation_provider="invalid_provider",  # Invalid value
         transcription_provider="invalid_provider",  # Invalid value
+        use_artifact_cache=True,
+        max_artifact_cache_size_mb=50,  # Invalid value (too small)
     )
     errors = validate_config(config)
-    assert len(errors) == 3
+    assert len(errors) == 4
 
 
 def test_config_to_from_dict() -> None:
@@ -144,6 +154,8 @@ def test_config_to_from_dict() -> None:
         cache_expiry_days=7,
         voice_isolation_provider="eleven_labs",
         transcription_provider="openai_whisper",
+        use_artifact_cache=True,
+        max_artifact_cache_size_mb=2000,
     )
 
     # Convert to dict and back
@@ -187,6 +199,8 @@ def test_validate_config(test_env: CacheTestEnv) -> None:
         cache_expiry_days=7,
         voice_isolation_provider="eleven_labs",
         transcription_provider="openai_whisper",
+        use_artifact_cache=True,
+        max_artifact_cache_size_mb=2000,
     )
 
     errors = config.validate_config(cfg)

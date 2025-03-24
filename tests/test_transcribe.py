@@ -62,7 +62,6 @@ def test_transcribe_audio(
         segments = transcribe_audio(
             audio_file,
             transcript_path=transcript_path,
-            model="whisper-1",
             language="english",
             task_id=None,
             progress=None,
@@ -108,7 +107,6 @@ def test_transcribe_error(tmp_path: Path, mock_openai: Mock) -> None:
             transcribe_audio(
                 audio_file,
                 transcript_path=transcript_path,
-                model="whisper-1",
                 language="english",
                 task_id=None,
                 progress=None,
@@ -168,7 +166,6 @@ def test_transcribe_with_length_filters(
         segments = transcribe_audio(
             audio_file,
             transcript_path=transcript_path,
-            model="whisper-1",
             language="english",
             task_id=None,
             progress=None,
