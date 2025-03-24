@@ -5,7 +5,7 @@ import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Protocol, TypeVar, runtime_checkable
+from typing import Any, NotRequired, Protocol, TypedDict, TypeVar, runtime_checkable
 
 from rich.console import Console
 from rich.progress import (
@@ -30,18 +30,99 @@ T = TypeVar("T")
 
 logger = logging.getLogger(__name__)
 
+# Type definitions for pipeline artifacts
+VersionType = int | str | Callable[..., int | str]
+
+
+class ArtifactSpec(TypedDict):
+    """Specification for a pipeline artifact."""
+
+    extension: str
+    cache: bool
+    version: NotRequired[VersionType]
+    terminal: NotRequired[bool]
+
+
+class ArtifactSpecWithName(ArtifactSpec):
+    """Artifact specification with a name field."""
+
+    name: str
+
+
+def create_artifact_spec(
+    extension: str = "mp3",
+    cache: bool = False,
+    version: VersionType | None = None,
+    hash: VersionType | None = None,
+    terminal: bool | None = None,
+) -> ArtifactSpec:
+    """
+    Create a validated artifact specification.
+
+    Args:
+        extension: File extension for the artifact
+        cache: Whether to cache the artifact output
+        version: Version number/string/function for cache invalidation
+        hash: Hash function or value for cache invalidation (alternative to version)
+        terminal: Whether this is a terminal artifact
+
+    Returns:
+        A validated ArtifactSpec
+
+    Raises:
+        ValueError: If both version and hash are specified
+    """
+    if version is not None and hash is not None:
+        raise ValueError("Cannot specify both 'version' and 'hash' arguments")
+
+    spec: ArtifactSpec = {"extension": extension, "cache": cache}
+
+    # Either version or hash implies cache=True
+    if version is not None or hash is not None:
+        spec["cache"] = True
+
+    # Add version or hash if specified (stored as 'version')
+    if version is not None:
+        spec["version"] = version
+    elif hash is not None:
+        spec["version"] = hash
+    else:
+        spec["version"] = 1
+
+    # Add terminal flag if specified
+    if terminal is not None:
+        spec["terminal"] = terminal
+
+    return spec
+
+
+def create_artifact_spec_from_dict(data: dict[str, Any]) -> ArtifactSpec:
+    """
+    Create an ArtifactSpec from a dictionary.
+
+    Args:
+        data: Dictionary with artifact specification
+
+    Returns:
+        A validated ArtifactSpec
+    """
+    return create_artifact_spec(
+        extension=data.get("extension", "mp3"),
+        cache=data.get("cache", False),
+        version=data.get("version"),
+        hash=data.get("hash"),
+        terminal=data.get("terminal"),
+    )
+
 
 @runtime_checkable
 class PipelineFunction(Protocol):
     """Protocol for pipeline functions."""
 
     __name__: str
-    produced_artifacts: dict[str, dict[str, Any]]
+    produced_artifacts: dict[str, ArtifactSpec]
 
     def __call__(self, context: "PipelineContext", **kwargs: Any) -> None: ...
-
-
-VersionType = int | str | Callable[..., int | str]
 
 
 def resolve_version(version: VersionType, context: "PipelineContext") -> int | str:
@@ -85,38 +166,62 @@ def resolve_version(version: VersionType, context: "PipelineContext") -> int | s
     raise ValueError(f"Invalid version type: {type(version)}")
 
 
-def pipeline_function(**artifacts: dict[str, Any]) -> Callable[[Callable[..., None]], PipelineFunction]:
+def pipeline_function(
+    *,
+    extension: str = "",
+    cache: bool = False,
+    version: VersionType | None = None,
+    hash: VersionType | None = None,
+    artifacts: list[dict[str, Any]] | None = None,
+) -> Callable[[Callable[..., None]], PipelineFunction]:
     """
     Decorator that annotates a pipeline function with the artifacts it produces.
 
     Example usage:
-        @pipeline_function(transcript={"extension": "srt"})
+        # Simple usage with default artifact name (function name)
+        @pipeline_function(extension="srt")
         def transcribe(...): ...
 
-        @pipeline_function(translation={"extension": "srt", "cache": True, "version": 2})
+        # With explicit caching and version
+        @pipeline_function(extension="srt", version=2)
         def translate(...): ...
 
-        @pipeline_function(translation={"extension": "srt", "cache": True, "version": get_translation_version})
+        # With hash function for caching
+        @pipeline_function(extension="srt", hash=get_translation_hash)
         def translate(...): ...
+
+        # For terminal functions that don't produce artifacts
+        @pipeline_function(artifacts=[])  # or artifacts=None
+        def terminal_function(...): ...
 
     Args:
-        **artifacts: Dictionary of artifact definitions. Each artifact can have these properties:
-            - extension: File extension for the artifact (required)
-            - cache: Whether to cache the artifact output (default: False)
-            - version: Version number/string/function for cache invalidation (default: 1)
-            - terminal: Whether this is a terminal artifact that shouldn't be cached (default: False)
+        extension: File extension for the artifact (when using simplified form)
+        cache: Whether to cache the artifact output (default: False)
+        version: Version number/string/function for cache invalidation
+        hash: Hash function or value for cache invalidation (alternative to version)
+        artifacts: List of artifact definitions or None for terminal functions
     """
 
     def decorator(func: Callable[..., None]) -> PipelineFunction:
-        # Store the artifact definitions
-        func.produced_artifacts = artifacts  # type: ignore
+        produced_artifacts: dict[str, ArtifactSpec] = {}
 
-        # Set defaults for caching properties
-        for _artifact_name, artifact_def in artifacts.items():
-            if "cache" not in artifact_def:
-                artifact_def["cache"] = False
-            if "version" not in artifact_def:
-                artifact_def["version"] = 1
+        # Case 1: Using simplified form with extension/cache/version/hash
+        if extension or cache or version is not None or hash is not None:
+            # Use function name as artifact name
+            artifact_name = func.__name__
+            artifact_spec = create_artifact_spec(extension=extension or "mp3", cache=cache, version=version, hash=hash)
+            produced_artifacts[artifact_name] = artifact_spec
+
+        # Case 2: Handle artifacts list (including empty list or None)
+        else:
+            for artifact_data in artifacts or []:
+                artifact_name = artifact_data.get("name", func.__name__)
+                # Create a clean artifact definition using our helper
+                artifact_spec = create_artifact_spec_from_dict(artifact_data)
+                produced_artifacts[artifact_name] = artifact_spec
+
+        # Store the artifact definitions
+        func.produced_artifacts = produced_artifacts  # type: ignore
 
         return func  # type: ignore
 
@@ -440,9 +545,9 @@ class PipelineRunner:
         """Determine if caching should be used for this function."""
         # Check if this is a terminal stage that should bypass cache
         if isinstance(func, PipelineFunction) and hasattr(func, "produced_artifacts"):
-            for artifact_info in func.produced_artifacts.values():
-                if artifact_info.get("terminal", False):
-                    return False
+            # Empty artifacts list means terminal function (no caching)
+            if not func.produced_artifacts:
+                return False
 
         # Check if artifact caching is disabled globally
         if not self.options.use_artifact_cache:
@@ -788,7 +893,7 @@ def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -
                 logger.warning(f"Error cleaning up cache: {e}")
 
 
-@pipeline_function(transcode={"extension": "mp3", "cache": True, "version": get_transcode_version})
+@pipeline_function(extension="mp3", hash=get_transcode_version)
 def transcode(context: PipelineContext, input_path: Path) -> None:
     """Transcode an audio/video file to an audio file suitable for processing."""
     from .transcoder import transcode_audio
@@ -797,7 +902,7 @@ def transcode(context: PipelineContext, input_path: Path) -> None:
     transcode_audio(input_path, output_path, progress_callback=context.progress.update_progress)
 
 
-@pipeline_function(voice_isolation={"extension": "mp3", "cache": True, "version": get_voice_isolation_version})
+@pipeline_function(extension="mp3", hash=get_voice_isolation_version)
 def voice_isolation(context: PipelineContext, transcode: Path) -> None:
     """Isolate voice from background noise."""
     from .voice_isolation import isolate_voice
@@ -806,7 +911,7 @@ def voice_isolation(context: PipelineContext, transcode: Path) -> None:
     isolate_voice(transcode, output_path, progress_callback=context.progress.update_progress)
 
 
-@pipeline_function(transcribe={"extension": "srt", "cache": True, "version": get_transcription_version})
+@pipeline_function(extension="srt", hash=get_transcription_version)
 def transcribe(context: PipelineContext, voice_isolation: Path | None = None, transcode: Path | None = None) -> None:
     """Transcribe audio to text."""
     from .transcribe import transcribe_audio
@@ -825,14 +930,14 @@ def transcribe(context: PipelineContext, voice_isolation: Path | None = None, tr
     )
 
 
-@pipeline_function(segments={"extension": "json", "cache": True, "version": get_translation_version})
+@pipeline_function(extension="json", hash=get_translation_version)
 def translate(context: PipelineContext, transcribe: Path) -> None:
     """Translate transcribed text to target language."""
     from .translate import translate_segments_to_json
 
     translate_segments_to_json(
         input_file=transcribe,
-        output_file=context.get_artifact_path("segments"),
+        output_file=context.get_artifact_path(),
         target_language=context.target_language or LanguageCode("en"),
         task_id=context.stage_task_id,
         progress=context.progress.progress,
@@ -841,11 +946,10 @@ def translate(context: PipelineContext, transcribe: Path) -> None:
     )
 
 
-@pipeline_function(deck={"extension": "directory", "terminal": True})
+@pipeline_function(artifacts=[])
 def generate_deck(
     context: PipelineContext,
-    segments: Path,
-    translation: Path | None = None,
+    translate: Path,
     transcribe: Path | None = None,
     pronunciation: Path | None = None,
     voice_isolation: Path | None = None,
@@ -860,10 +964,10 @@ def generate_deck(
         raise ValueError("No input audio file available for deck generation")
 
     generate_anki_deck(
-        segments_file=segments,
+        segments_file=translate,
         input_audio_file=input_audio,
         transcription_file=transcribe,
-        translation_file=translation,
+        translation_file=None,  # This parameter is no longer used
         pronunciation_file=pronunciation,
         source_language=context.source_language,
         target_language=context.target_language or "english",

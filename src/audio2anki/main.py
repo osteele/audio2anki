@@ -13,6 +13,7 @@ from rich.text import Text
 
 from .config import edit_config, load_config, reset_config, set_config_value
 from .pipeline import PipelineOptions, run_pipeline
+from .types import LanguageCode
 from .utils import is_deck_folder, is_empty_directory
 
 # Setup basic logging configuration
@@ -69,7 +70,7 @@ def language_name_to_code(language_name: str) -> str | None:
     """
     import langcodes
 
-    if len(language_name) == 2:
+    if 2 <= len(language_name) <= 3:
         return language_name
 
     try:
@@ -83,6 +84,31 @@ def language_name_to_code(language_name: str) -> str | None:
         return lang.to_tag()
     except (LookupError, AttributeError):
         # Return None if language is not found
+        return None
+
+
+def optional_language_name_to_code(language_name: str | None) -> "LanguageCode | None":
+    """
+    Translates an optional language name to its corresponding LanguageCode.
+
+    Args:
+        language_name (str | None): The name of the language (e.g., "English", "Chinese") or None.
+
+    Returns:
+        LanguageCode | None: The corresponding LanguageCode or None if not found or input is None.
+    """
+    from .types import LanguageCode
+
+    if language_name is None:
+        return None
+
+    code = language_name_to_code(language_name)
+    if code is None:
+        return None
+
+    try:
+        return LanguageCode(code)
+    except ValueError:
         return None
 
 
@@ -193,8 +219,8 @@ def process(
     # Translate source_language from a language name to a language code
 
     options = PipelineOptions(
-        source_language=language_name_to_code(source_language),
-        target_language=language_name_to_code(target_language),
+        source_language=optional_language_name_to_code(source_language),
+        target_language=optional_language_name_to_code(target_language),
         debug=debug,
         output_folder=resolved_output_path,
         skip_voice_isolation=skip_voice_isolation,

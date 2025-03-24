@@ -18,10 +18,11 @@ from audio2anki.pipeline import (
     run_pipeline,
     validate_pipeline,
 )
+from audio2anki.types import LanguageCode
 
 
 # Create a pipeline-compatible version of generate_deck just for testing
-@pipeline_function(deck={"extension": "apkg"})
+@pipeline_function(extension="apkg")
 def pipeline_generate_deck(
     context: PipelineContext,
     voice_isolation: Path,
@@ -76,7 +77,7 @@ def pipeline_runner(mock_pipeline_progress: PipelineProgress, mock_console: Cons
     input_file = tmp_path / "input.txt"
     input_file.write_text("test content")
 
-    options = PipelineOptions(source_language="chinese", target_language="english")
+    options = PipelineOptions(source_language=LanguageCode("zh"), target_language=LanguageCode("en"))
 
     # Create the runner without using class method to avoid Rich's Progress initialization
     context = PipelineContext(
@@ -104,19 +105,19 @@ def pipeline_runner(mock_pipeline_progress: PipelineProgress, mock_console: Cons
 def test_validate_pipeline() -> None:
     """Test pipeline validation."""
 
-    @pipeline_function(output1={"extension": "txt"})
+    @pipeline_function(extension="txt")
     def func1(context: PipelineContext, input_path: Path) -> None:
         pass
 
-    @pipeline_function(output2={"extension": "txt"})
-    def func2(context: PipelineContext, output1: Path) -> None:
+    @pipeline_function(extension="txt")
+    def func2(context: PipelineContext, func1: Path) -> None:
         pass
 
-    @pipeline_function(output3={"extension": "txt"}, output4={"extension": "txt"})
-    def func3(context: PipelineContext, output2: Path) -> None:
+    @pipeline_function(artifacts=[{"name": "output3", "extension": "txt"}, {"name": "output4", "extension": "txt"}])
+    def func3(context: PipelineContext, func2: Path) -> None:
         pass
 
-    @pipeline_function(output5={"extension": "txt"})
+    @pipeline_function(extension="txt")
     def func4(context: PipelineContext, missing: Path) -> None:
         pass
 
@@ -184,7 +185,7 @@ def test_pipeline_cache_integration(mock_pipeline_progress: PipelineProgress, tm
         context.set_input_file(input_file)
 
         # Create a test pipeline function
-        @pipeline_function(test_artifact={"extension": "txt"})
+        @pipeline_function(extension="txt")
         def test_function(context: PipelineContext) -> None:
             """Test function that produces a single artifact."""
             pass
@@ -193,11 +194,11 @@ def test_pipeline_cache_integration(mock_pipeline_progress: PipelineProgress, tm
         stage_context = context.for_stage(test_function)
 
         # Get the artifact path
-        artifact_path = stage_context.get_artifact_path("test_artifact")
+        artifact_path = stage_context.get_artifact_path()
 
         # The path should be in the temp directory and have the correct name
         assert "audio2anki_" in str(artifact_path)
-        assert str(artifact_path).endswith("test_artifact.txt")
+        assert str(artifact_path).endswith("test_function.txt")
     finally:
         # Clean up
         cleanup_cache()
@@ -207,11 +208,11 @@ def test_pipeline_runner_should_use_cache(pipeline_runner: PipelineRunner) -> No
     """Test the should_use_cache method of PipelineRunner."""
 
     # Create test pipeline functions
-    @pipeline_function(test1={"extension": "txt"})
+    @pipeline_function(extension="txt")
     def normal_func(context: PipelineContext) -> None:
         pass
 
-    @pipeline_function(test2={"extension": "txt", "terminal": True})
+    @pipeline_function(artifacts=[])
     def terminal_func(context: PipelineContext) -> None:
         pass
 
@@ -230,7 +231,7 @@ def test_pipeline_runner_get_cached_artifacts(pipeline_runner: PipelineRunner, t
     """Test the get_cached_artifacts method of PipelineRunner."""
 
     # Create a test pipeline function
-    @pipeline_function(artifact1={"extension": "txt"})
+    @pipeline_function(extension="txt")
     def test_func(context: PipelineContext) -> None:
         pass
 
@@ -243,8 +244,8 @@ def test_pipeline_runner_get_cached_artifacts(pipeline_runner: PipelineRunner, t
         # Test cache hit
         cache_hit, paths = pipeline_runner.get_cached_artifacts(test_func)
         assert cache_hit is True
-        assert "artifact1" in paths
-        assert paths["artifact1"] == mock_path
+        assert "test_func" in paths
+        assert paths["test_func"] == mock_path
 
         # Set up for cache miss
         mock_retrieve.return_value = None
@@ -259,22 +260,21 @@ def test_pipeline_runner_update_artifacts(pipeline_runner: PipelineRunner, tmp_p
     """Test the update_artifacts method of PipelineRunner."""
 
     # Create a test pipeline function with single artifact
-    @pipeline_function(single_artifact={"extension": "txt"})
+    @pipeline_function(extension="txt")
     def single_func(context: PipelineContext) -> None:
         pass
 
     # Create a test pipeline function with multiple artifacts
-    @pipeline_function(artifact1={"extension": "txt"}, artifact2={"extension": "txt"})
+    @pipeline_function(artifacts=[{"name": "artifact1", "extension": "txt"}, {"name": "artifact2", "extension": "txt"}])
     def multi_func(context: PipelineContext) -> None:
         pass
 
     # Test single artifact function
-    paths = {"single_artifact": tmp_path / "single.txt"}
+    paths = {"single_func": tmp_path / "single.txt"}
     pipeline_runner.update_artifacts(single_func, paths)
 
-    # Check that both the artifact name and function name are keys
-    assert pipeline_runner.artifacts["single_artifact"] == paths["single_artifact"]
-    assert pipeline_runner.artifacts["single_func"] == paths["single_artifact"]
+    # Check that the function name is a key
+    assert pipeline_runner.artifacts["single_func"] == paths["single_func"]
 
     # Test multiple artifact function
     paths = {"artifact1": tmp_path / "artifact1.txt", "artifact2": tmp_path / "artifact2.txt"}
@@ -298,8 +298,8 @@ def test_pipeline_stages(test_audio_file: Path, tmp_path: Path) -> None:
 
     # Create pipeline options with voice isolation skipped to simplify test
     options = PipelineOptions(
-        source_language="chinese",
-        target_language="english",
+        source_language=LanguageCode("zh"),
+        target_language=LanguageCode("en"),
         skip_voice_isolation=True,  # Skip voice isolation to simplify the pipeline
         output_folder=dummy_result_path,  # Set the output folder to our dummy path
     )
@@ -360,7 +360,7 @@ def test_execute_stage(pipeline_runner: PipelineRunner, tmp_path: Path) -> None:
     """Test the execute_stage method of PipelineRunner."""
 
     # Create a test pipeline function
-    @pipeline_function(test_output={"extension": "txt"})
+    @pipeline_function(extension="txt")
     def test_func(context: PipelineContext) -> None:
         # Since we can't actually write to the path in the test environment,
         # we'll just pass and mock the file existence check

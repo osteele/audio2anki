@@ -108,14 +108,17 @@ The pipeline implements a two-level caching system:
    - Automatically cleans up old artifacts (default: 14 days)
    - Configurable through artifact decorators:
      ```python
-     @pipeline_function(
-         artifact_name={
-             "extension": "mp3",
-             "cache": True,
-             "version": get_version_function,
-             "terminal": False
-         }
-     )
+     # Simple usage with default artifact name (function name)
+     @pipeline_function(extension="mp3", hash=get_version_function)
+     
+     # For terminal functions that don't produce artifacts
+     @pipeline_function(artifacts=[])
+     
+     # With multiple artifacts
+     @pipeline_function(artifacts=[
+         {"name": "artifact1", "extension": "mp3", "cache": True, "version": 1},
+         {"name": "artifact2", "extension": "json", "hash": get_hash_function}
+     ])
      ```
 
 ### Pipeline Stages
@@ -124,31 +127,31 @@ The standard pipeline includes these stages:
 
 1. **Audio Transcoding:**
    ```python
-   @pipeline_function(transcode={"extension": "mp3", "cache": True, "version": get_transcode_version})
+   @pipeline_function(extension="mp3", hash=get_transcode_version)
    def transcode(context: PipelineContext, input_path: Path) -> None
    ```
 
 2. **Voice Isolation:**
    ```python
-   @pipeline_function(voice_isolation={"extension": "mp3", "cache": True, "version": get_voice_isolation_version})
+   @pipeline_function(extension="mp3", hash=get_voice_isolation_version)
    def voice_isolation(context: PipelineContext, transcode: Path) -> None
    ```
 
 3. **Transcription:**
    ```python
-   @pipeline_function(transcribe={"extension": "srt", "cache": True, "version": get_transcription_version})
+   @pipeline_function(extension="srt", hash=get_transcription_version)
    def transcribe(context: PipelineContext, voice_isolation: Path | None = None, transcode: Path | None = None) -> None
    ```
 
 4. **Translation:**
    ```python
-   @pipeline_function(segments={"extension": "json", "cache": True, "version": get_translation_version})
+   @pipeline_function(extension="json", hash=get_translation_version)
    def translate(context: PipelineContext, transcribe: Path) -> None
    ```
 
 5. **Deck Generation:**
    ```python
-   @pipeline_function(deck={"extension": "directory", "terminal": True})
+   @pipeline_function(artifacts=[])
    def generate_deck(context: PipelineContext, segments: Path, ...) -> None
    ```
 

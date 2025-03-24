@@ -9,6 +9,7 @@ from rich.progress import Progress
 
 from audio2anki.transcribe import TranscriptionSegment
 from audio2anki.translate import translate_segments
+from audio2anki.types import LanguageCode
 
 
 @pytest.mark.parametrize(
@@ -40,7 +41,7 @@ def test_translate_with_openai(input_text: str, expected_translation: str) -> No
                 task_id = progress.add_task("Translating", total=1)
 
                 # Translate segment - we'll check the functionality but not exact values
-                result = translate_segments([segment], "english", task_id, progress)
+                result = translate_segments([segment], LanguageCode("en"), task_id, progress)
 
                 # Verify translation was assigned (not checking exact value due to test stability)
                 assert len(result) == 1
@@ -66,7 +67,7 @@ def test_translate_with_deepl() -> None:
                 task_id = progress.add_task("Translating", total=1)
 
                 # Translate segment
-                result = translate_segments([segment], "english", task_id, progress)
+                result = translate_segments([segment], LanguageCode("en"), task_id, progress)
 
                 # Verify translation was assigned
                 assert len(result) == 1
@@ -106,7 +107,7 @@ def test_fallback_to_openai_when_deepl_fails() -> None:
                     task_id = progress.add_task("Translating", total=1)
 
                     # Translate segment - error should cause fallback to original text
-                    result = translate_segments([segment], "english", task_id, progress)
+                    result = translate_segments([segment], LanguageCode("en"), task_id, progress)
 
                     # Verify translation matches the original text (due to error fallback)
                     assert len(result) == 1
@@ -138,7 +139,7 @@ def test_error_handling() -> None:
                 task_id = progress.add_task("Translating", total=1)
 
                 # Translate segment - should handle error and return original segment
-                result = translate_segments([segment], "english", task_id, progress)
+                result = translate_segments([segment], LanguageCode("en"), task_id, progress)
 
                 # Verify result - should return the original segment with text as translation
                 assert len(result) == 1
@@ -167,7 +168,7 @@ def test_empty_response_handling() -> None:
                 task_id = progress.add_task("Translating", total=1)
 
                 # Translate segment - should handle empty response
-                result = translate_segments([segment], "english", task_id, progress)
+                result = translate_segments([segment], LanguageCode("en"), task_id, progress)
 
                 # Verify result - should return original text as translation
                 assert len(result) == 1
@@ -180,5 +181,5 @@ def test_no_api_keys_raises_error() -> None:
         with Progress() as progress:
             task_id = progress.add_task("test", total=1)
             with pytest.raises(ValueError) as exc:
-                translate_segments([], "english", task_id, progress)
+                translate_segments([], LanguageCode("en"), task_id, progress)
             assert "OPENAI_API_KEY environment variable is required" in str(exc.value)

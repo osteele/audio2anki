@@ -15,6 +15,7 @@ import soundfile as sf
 from rich.progress import Progress, TaskID
 
 from audio2anki.pipeline import PipelineContext, PipelineProgress, pipeline_function
+from audio2anki.types import LanguageCode
 
 
 class MockResponse:
@@ -106,14 +107,14 @@ def mock_pipeline_context(mock_pipeline_progress: PipelineProgress, tmp_path: Pa
     """Create a mock pipeline context."""
     context = PipelineContext(
         progress=mock_pipeline_progress,
-        source_language="chinese",
+        source_language=LanguageCode("zh"),
     )
     context.set_input_file(tmp_path / "input.mp3")
     return context
 
 
 # Add a decorator to make the test function compatible with PipelineFunction
-@pipeline_function(test_isolation={"extension": "mp3"})
+@pipeline_function(extension="mp3")
 def mock_isolate_voice(input_path: Path, output_path: Path, progress_callback: Callable[[float], None]) -> None:
     """Test implementation that creates the output file."""
     # Simply create the output file
@@ -145,11 +146,11 @@ def test_isolate_voice_basic(
 
     # pyright: ignore[reportPrivateUsage]
     mock_pipeline_context._current_fn = mock_isolate_voice
-    mock_pipeline_context.update_stage_input("isolated_voice", real_test_audio_file)
+    mock_pipeline_context.update_stage_input("mock_isolate_voice", real_test_audio_file)
 
     # Set up the artifacts dictionary
     # pyright: ignore[reportPrivateUsage]
-    mock_pipeline_context._artifacts = {"isolated_voice": {"extension": "mp3"}}
+    mock_pipeline_context._artifacts = {"mock_isolate_voice": {"extension": "mp3"}}
 
     # Create output path in the temporary directory
     output_path = real_test_audio_file.parent / "output.mp3"

@@ -10,6 +10,7 @@ from openai import AuthenticationError, OpenAI
 from openai.types.audio import Transcription
 
 from audio2anki.transcribe import TranscriptionSegment, load_transcript, save_transcript, transcribe_audio
+from audio2anki.types import LanguageCode
 
 # Configure logging for tests
 logging.basicConfig(level=logging.DEBUG)
@@ -62,7 +63,7 @@ def test_transcribe_audio(
         segments = transcribe_audio(
             audio_file,
             transcript_path=transcript_path,
-            language="english",
+            language=LanguageCode("en"),
             task_id=None,
             progress=None,
         )
@@ -107,7 +108,7 @@ def test_transcribe_error(tmp_path: Path, mock_openai: Mock) -> None:
             transcribe_audio(
                 audio_file,
                 transcript_path=transcript_path,
-                language="english",
+                language=LanguageCode("en"),
                 task_id=None,
                 progress=None,
             )
@@ -166,7 +167,7 @@ def test_transcribe_with_length_filters(
         segments = transcribe_audio(
             audio_file,
             transcript_path=transcript_path,
-            language="english",
+            language=LanguageCode("en"),
             task_id=None,
             progress=None,
             min_length=1.5,  # Filter out segments shorter than 1.5 seconds
