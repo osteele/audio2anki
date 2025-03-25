@@ -1,7 +1,10 @@
 """Audio processing pipeline module."""
 
+import hashlib
 import inspect
 import logging
+import shutil
+import signal
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -18,6 +21,8 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 
+from . import artifact_cache
+from .artifact_cache import try_hard_link
 from .transcoder import TRANSCODING_FORMAT, get_transcode_hash
 from .transcribe import get_transcription_hash
 from .translate import TranslationProvider, get_translation_hash
@@ -569,6 +574,42 @@ class PipelineRunner:
         for artifact_name, path in artifact_paths.items():
             self.artifacts[artifact_name] = path
 
+    def copy_to_temp_cache(self, source_path: Path, artifact_name: str, extension: str) -> Path:
+        """Copy an artifact from the persistent cache to the temporary cache using hard links when possible.
+
+        Args:
+            source_path: Path to the source file in the persistent cache
+            artifact_name: Name of the artifact
+            extension: File extension for the artifact
+
+        Returns:
+            Path to the copied file in the temporary cache
+        """
+        from . import cache
+
+        # Get the destination path in the temporary cache
+        dest_path = cache.get_artifact_path(artifact_name, extension)
+
+        # Try to create a hard link first
+        if try_hard_link(source_path, dest_path):
+            logger.debug(f"Created hard link from {source_path} to {dest_path}")
+            return dest_path
+
+        # Fall back to regular copying if hard linking fails
+        try:
+            logger.debug(f"Copying file from {source_path} to {dest_path} using regular copy")
+            shutil.copy2(source_path, dest_path)
+            return dest_path
+        except Exception as e:
+            error_msg = f"Failed to copy artifact from persistent cache to temporary cache: {e}"
+            logger.error(error_msg)
+            console = Console(stderr=True)
+            console.print(f"[bold red]Error:[/] {error_msg}")
+            console.print("[yellow]Hint:[/] Check disk space and permissions.")
+            import sys
+
+            sys.exit(1)
+
     def get_function_kwargs(self, func: PipelineFunctionType) -> dict[str, Any]:
         """Get the required arguments for this function from artifacts."""
         params = inspect.signature(func).parameters
@@ -648,7 +689,6 @@ class PipelineRunner:
         Returns:
             An integer hash suitable for cache keys
         """
-        import hashlib
 
         # Start with file hash if we have input files
         content_hash = hashlib.md5()
@@ -681,7 +721,6 @@ class PipelineRunner:
         Returns:
             Tuple of (cache hit, artifact paths dict)
         """
-        from . import artifact_cache
 
         func_name = func.__name__
         logger.debug(f"Checking persistent cache for function: {func_name}")
@@ -721,7 +760,10 @@ class PipelineRunner:
 
             if cache_hit and cached_path:
                 logger.debug(f"✅ Cache HIT for '{artifact_name}' at {cached_path}")
-                artifact_paths[artifact_name] = cached_path
+                # Copy the artifact from the persistent cache to the temporary cache using hard links when possible
+                temp_path = self.copy_to_temp_cache(cached_path, artifact_name, extension)
+                artifact_paths[artifact_name] = temp_path
+                logger.debug(f"Copied artifact from persistent cache to temporary cache at {temp_path}")
             else:
                 logger.debug(f"❌ Cache MISS for '{artifact_name}'")
                 all_found = False
@@ -744,7 +786,6 @@ class PipelineRunner:
             context: The pipeline context
             kwargs: The function arguments used
         """
-        from . import artifact_cache
 
         func_name = func.__name__
         logger.debug(f"Storing artifacts in persistent cache for function: {func_name}")
@@ -783,9 +824,26 @@ class PipelineRunner:
                     )
                     logger.debug(f"✅ Stored '{artifact_name}' in persistent cache (hash {cache_key}) at {stored_path}")
                 except Exception as e:
-                    logger.warning(f"❌ Failed to store '{artifact_name}' in persistent cache: {e}")
+                    error_msg = f"❌ Failed to store '{artifact_name}' in persistent cache: {e}"
+                    logger.error(error_msg)
+                    from rich.console import Console
+
+                    console = Console(stderr=True)
+                    console.print(f"[bold red]Error:[/] {error_msg}")
+                    console.print("[yellow]Hint:[/] Check disk space or disable artifact cache with --no-cache flag.")
+                    import sys
+
+                    sys.exit(1)
             else:
-                logger.warning(f"❌ Cannot store '{artifact_name}' in cache - file does not exist at {artifact_path}")
+                error_msg = f"❌ Cannot store '{artifact_name}' in cache - file does not exist at {artifact_path}"
+                logger.error(error_msg)
+                from rich.console import Console
+
+                console = Console(stderr=True)
+                console.print(f"[bold red]Error:[/] {error_msg}")
+                import sys
+
+                sys.exit(1)
 
     def run(self) -> Path:
         """Run the entire pipeline and return the final artifact path."""
@@ -826,7 +884,10 @@ def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -
     Returns:
         Path: The path to the generated deck directory
     """
-    from . import artifact_cache, cache
+    import atexit
+    import sys as signal_sys  # Import sys with alias to avoid conflicts
+
+    from . import cache
     from .utils import format_bytes
 
     # Clean up old artifacts in the persistent cache if enabled
@@ -844,6 +905,26 @@ def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -
     cache_dir = cache.get_cache().temp_dir
     logger.info(f"Initialized temporary cache at {cache_dir}")
     logger.debug(f"Cache directory location: {cache_dir}")
+
+    # Define cleanup function for signal handlers and atexit
+    def cleanup_temp_cache(signum: int | None = None, frame: Any = None) -> None:
+        if not options.debug:
+            logger.debug("Cleaning up cache directory due to program termination")
+            try:
+                cache.cleanup_cache()
+                if signum is not None:
+                    # If this was called from a signal handler, exit the program
+                    signal_sys.exit(1)
+            except Exception as e:
+                logger.warning(f"Error cleaning up cache: {e}")
+
+    # Register signal handlers and atexit hook for cleanup
+    if not options.debug:
+        # Register cleanup for normal exit
+        atexit.register(cleanup_temp_cache)
+        # Register cleanup for signals
+        signal.signal(signal.SIGINT, cleanup_temp_cache)  # Ctrl+C
+        signal.signal(signal.SIGTERM, cleanup_temp_cache)  # kill command
 
     try:
         with PipelineProgress.create(console) as progress:

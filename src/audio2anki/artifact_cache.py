@@ -4,8 +4,10 @@ import hashlib
 import json
 import logging
 import os
+import platform
 import shutil
 import sqlite3
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -13,6 +15,36 @@ from typing import Any
 
 # Use module-level logger
 logger = logging.getLogger(__name__)
+
+
+def try_hard_link(src: Path, dst: Path) -> bool:
+    """
+    Attempt to create a hard link between src and dst.
+
+    Args:
+        src: Source file path
+        dst: Destination file path
+
+    Returns:
+        True if hard link was created, False if not supported or failed
+    """
+    # Check if we're on a system that supports hard links
+    # Most Unix-like systems (macOS, Linux) support hard links
+    if platform.system() in ("Darwin", "Linux"):
+        try:
+            # Remove destination if it exists
+            if dst.exists():
+                dst.unlink()
+
+            # Create hard link
+            os.link(src, dst)
+            logger.debug(f"Created hard link from {src} to {dst}")
+            return True
+        except OSError as e:
+            # Hard link failed (possibly across filesystems)
+            logger.debug(f"Hard link failed: {e}. Will fall back to copy.")
+            return False
+    return False
 
 
 class ArtifactCache:
@@ -63,16 +95,14 @@ class ArtifactCache:
             """)
 
             # Create index for faster lookups
-            cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_name_hash_key ON artifacts (artifact_name, input_hash, key)"
-            )
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_name_hash_key ON artifacts (artifact_name, input_hash, key)")
 
             # Check if we need to migrate from an older schema
             cursor.execute("PRAGMA table_info(artifacts)")
             columns = [info[1] for info in cursor.fetchall()]
-            
+
             # If 'key' column doesn't exist but 'version' does, we need to migrate
-            if 'key' not in columns and 'version' in columns:
+            if "key" not in columns and "version" in columns:
                 logger.info("Migrating database schema: adding 'key' column")
                 try:
                     # Create a new table with the updated schema
@@ -87,23 +117,23 @@ class ArtifactCache:
                             last_accessed_at REAL NOT NULL
                         )
                     """)
-                    
+
                     # Copy data from old table to new table, using version as key
                     cursor.execute("""
                         INSERT INTO artifacts_new
                         SELECT artifact_id, artifact_name, version, input_hash, file_path, created_at, last_accessed_at
                         FROM artifacts
                     """)
-                    
+
                     # Drop the old table and rename the new one
                     cursor.execute("DROP TABLE artifacts")
                     cursor.execute("ALTER TABLE artifacts_new RENAME TO artifacts")
-                    
+
                     # Recreate the index
                     cursor.execute(
                         "CREATE INDEX IF NOT EXISTS idx_name_hash_key ON artifacts (artifact_name, input_hash, key)"
                     )
-                    
+
                     conn.commit()
                     logger.info("Database schema migration completed successfully")
                 except Exception as e:
@@ -124,9 +154,9 @@ class ArtifactCache:
                     """)
                     conn.commit()
                     logger.info("Created new database schema after migration failure")
-            
+
             # Also update the index if needed
-            if 'key' in columns and 'version' not in columns:
+            if "key" in columns and "version" not in columns:
                 cursor.execute("DROP INDEX IF EXISTS idx_name_hash_version")
                 cursor.execute(
                     "CREATE INDEX IF NOT EXISTS idx_name_hash_key ON artifacts (artifact_name, input_hash, key)"
@@ -295,13 +325,18 @@ class ArtifactCache:
             else:
                 logger.debug("File exists at destination but is a different file, will be replaced")
 
-        # Copy the file to the cache
-        try:
-            logger.debug(f"Copying file from {data_path} to {dest_path}")
-            shutil.copy2(data_path, dest_path)
-        except Exception as e:
-            logger.error(f"Failed to copy artifact to cache: {e}")
-            raise
+        # Try to create a hard link
+        if try_hard_link(data_path, dest_path):
+            logger.debug(f"Stored artifact at {dest_path} using hard link")
+        else:
+            # Fallback to regular copying
+            try:
+                logger.debug(f"Copying file from {data_path} to {dest_path}")
+                shutil.copy2(data_path, dest_path)
+                logger.debug(f"Stored artifact at {dest_path} using copy")
+            except Exception as e:
+                logger.error(f"Failed to copy artifact to cache: {e}")
+                raise
 
         # Store metadata in the database
         current_time = time.time()
@@ -471,7 +506,10 @@ def get_cache_dir() -> Path:
     if os.name == "nt":  # Windows
         base_dir = os.environ.get("LOCALAPPDATA", os.path.expanduser("~\\AppData\\Local"))
         cache_dir = Path(base_dir) / "audio2anki" / "cache"
-    else:  # macOS, Linux, etc.
+    elif sys.platform == "darwin":  # macOS
+        base_dir = os.path.expanduser("~/Library/Caches")
+        cache_dir = Path(base_dir) / "audio2anki"
+    else:  # Linux, etc.
         base_dir = os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache"))
         cache_dir = Path(base_dir) / "audio2anki"
 
