@@ -1,7 +1,5 @@
 """Audio transcoding module using pydub."""
 
-import hashlib
-import json
 import logging
 import shutil
 import tempfile
@@ -11,10 +9,14 @@ from typing import Any, Literal, TypeAlias, TypedDict
 
 from pydub import AudioSegment
 
+from .utils import create_params_hash
+
 logger = logging.getLogger(__name__)
 
 # OpenAI input formats
 AudioFormat: TypeAlias = Literal["mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm"]
+
+TRANSCODING_FORMAT = "mp4"
 
 
 class TranscodingParams(TypedDict):
@@ -27,7 +29,7 @@ class TranscodingParams(TypedDict):
 
 # Default transcoding parameters - used by both the transcoding function and version calculation
 DEFAULT_TRANSCODING_PARAMS: TranscodingParams = {
-    "target_format": "mp4",
+    "target_format": TRANSCODING_FORMAT,
     "target_channels": 1,
     "target_sample_rate": 16000,
     "target_bitrate": "32k",
@@ -41,28 +43,17 @@ def get_output_path(input_path: str | Path, suffix: str = ".mp3") -> Path:
     return input_path.with_suffix(suffix)
 
 
-def get_transcode_version() -> int:
+def get_transcode_hash() -> str:
     """
-    Generate a version number for the transcoding function based on its current parameters.
+    Generate a hash for the transcoding function based on its current parameters.
 
     This creates a hash of the default transcoding parameters, ensuring cached artifacts
     are invalidated if the default implementation changes.
 
     Returns:
-        An integer version derived from the hash of parameters
+        A string hash derived from the parameters
     """
-    # Use the default parameter values stored in DEFAULT_TRANSCODING_PARAMS
-    params: TranscodingParams = DEFAULT_TRANSCODING_PARAMS.copy()
-
-    # Create a stable string representation for hashing
-    param_str = json.dumps(params, sort_keys=True)
-
-    # Hash the parameters and convert to an integer
-    hash_obj = hashlib.sha256(param_str.encode())
-    # Use the first 4 bytes of the hash as an integer
-    version = abs(int.from_bytes(hash_obj.digest()[:4], byteorder="big"))
-
-    return version
+    return create_params_hash(DEFAULT_TRANSCODING_PARAMS)
 
 
 def transcode_audio(

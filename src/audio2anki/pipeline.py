@@ -18,20 +18,19 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 
-from audio2anki.transcribe import get_transcription_version
-from audio2anki.translate import get_translation_version
-from audio2anki.voice_isolation import get_voice_isolation_version
-
-from .transcoder import get_transcode_version
-from .translate import TranslationProvider
+from .transcoder import TRANSCODING_FORMAT, get_transcode_hash
+from .transcribe import get_transcription_hash
+from .translate import TranslationProvider, get_translation_hash
 from .types import LanguageCode
-
-T = TypeVar("T")
+from .voice_isolation import VOICE_ISOLATION_FORMAT, get_voice_isolation_version
 
 logger = logging.getLogger(__name__)
 
+T = TypeVar("T")
+
 # Type definitions for pipeline artifacts
-VersionType = int | str | Callable[..., int | str]
+HashType = int | str | Callable[..., int | str]
+VersionType = int | str
 
 
 class ArtifactSpec(TypedDict):
@@ -40,7 +39,7 @@ class ArtifactSpec(TypedDict):
     extension: str
     cache: bool
     version: NotRequired[VersionType]
-    terminal: NotRequired[bool]
+    hash: NotRequired[HashType]
 
 
 class ArtifactSpecWithName(ArtifactSpec):
@@ -50,11 +49,10 @@ class ArtifactSpecWithName(ArtifactSpec):
 
 
 def create_artifact_spec(
-    extension: str = "mp3",
-    cache: bool = False,
+    extension: str,
+    cache: bool | None = None,
     version: VersionType | None = None,
-    hash: VersionType | None = None,
-    terminal: bool | None = None,
+    hash: HashType | None = None,
 ) -> ArtifactSpec:
     """
     Create a validated artifact specification.
@@ -62,36 +60,27 @@ def create_artifact_spec(
     Args:
         extension: File extension for the artifact
         cache: Whether to cache the artifact output
-        version: Version number/string/function for cache invalidation
-        hash: Hash function or value for cache invalidation (alternative to version)
-        terminal: Whether this is a terminal artifact
+        version: Version number/string for cache invalidation
+        hash: Hash function/value for cache invalidation
 
     Returns:
         A validated ArtifactSpec
-
-    Raises:
-        ValueError: If both version and hash are specified
     """
-    if version is not None and hash is not None:
-        raise ValueError("Cannot specify both 'version' and 'hash' arguments")
-
-    spec: ArtifactSpec = {"extension": extension, "cache": cache}
-
     # Either version or hash implies cache=True
     if version is not None or hash is not None:
-        spec["cache"] = True
+        if cache is False:
+            raise ValueError("Cannot specify version or hash without caching")
+        cache = True
 
-    # Add version or hash if specified (stored as 'version')
+    spec: ArtifactSpec = {"extension": extension, "cache": cache or False}
+
+    # Add version if specified
     if version is not None:
         spec["version"] = version
-    elif hash is not None:
-        spec["version"] = hash
-    else:
-        spec["version"] = 1
 
-    # Add terminal flag if specified
-    if terminal is not None:
-        spec["terminal"] = terminal
+    # Add hash if specified
+    if hash is not None:
+        spec["hash"] = hash
 
     return spec
 
@@ -111,7 +100,6 @@ def create_artifact_spec_from_dict(data: dict[str, Any]) -> ArtifactSpec:
         cache=data.get("cache", False),
         version=data.get("version"),
         hash=data.get("hash"),
-        terminal=data.get("terminal"),
     )
 
 
@@ -125,27 +113,27 @@ class PipelineFunction(Protocol):
     def __call__(self, context: "PipelineContext", **kwargs: Any) -> None: ...
 
 
-def resolve_version(version: VersionType, context: "PipelineContext") -> int | str:
+def resolve_hash(hash_value: HashType, context: "PipelineContext") -> int | str:
     """
-    Resolve a version value that can be an integer, string, or function.
+    Resolve a hash value that can be an integer, string, or function.
 
     Args:
-        version: The version value to resolve
+        hash_value: The hash value to resolve
         context: The pipeline context for function resolution
 
     Returns:
-        The resolved version value (int or str)
+        The resolved hash value (int or str)
 
     Raises:
-        ValueError: If the version function requires arguments that aren't available in the context
+        ValueError: If the hash function requires arguments that aren't available in the context
     """
-    if isinstance(version, int | str):
-        return version
+    if isinstance(hash_value, int | str):
+        return hash_value
 
     # If it's a function, call it with context attributes
-    if callable(version):
+    if callable(hash_value):
         # Get the function's parameter names
-        sig = inspect.signature(version)
+        sig = inspect.signature(hash_value)
         params = sig.parameters
 
         # Build kwargs from context attributes
@@ -157,21 +145,20 @@ def resolve_version(version: VersionType, context: "PipelineContext") -> int | s
                 kwargs[param_name] = getattr(context, param_name)
             else:
                 raise ValueError(
-                    f"Version function {version.__name__} requires parameter '{param_name}' "
+                    f"Hash function {hash_value.__name__} requires parameter '{param_name}' "
                     f"which is not available in the pipeline context"
                 )
 
-        return version(**kwargs)
+        return hash_value(**kwargs)
 
-    raise ValueError(f"Invalid version type: {type(version)}")
+    raise ValueError(f"Invalid hash type: {type(hash_value)}")
 
 
 def pipeline_function(
-    *,
-    extension: str = "",
-    cache: bool = False,
+    extension: str | None = None,
+    cache: bool | None = None,
     version: VersionType | None = None,
-    hash: VersionType | None = None,
+    hash: HashType | None = None,
     artifacts: list[dict[str, Any]] | None = None,
 ) -> Callable[[Callable[..., None]], PipelineFunction]:
     """
@@ -197,8 +184,8 @@ def pipeline_function(
     Args:
         extension: File extension for the artifact (when using simplified form)
         cache: Whether to cache the artifact output (default: False)
-        version: Version number/string/function for cache invalidation
-        hash: Hash function or value for cache invalidation (alternative to version)
+        version: Version number/string for cache invalidation
+        hash: Hash function/value for cache invalidation
         artifacts: List of artifact definitions or None for terminal functions
     """
 
@@ -213,12 +200,11 @@ def pipeline_function(
             produced_artifacts[artifact_name] = artifact_spec
 
         # Case 2: Handle artifacts list (including empty list or None)
-        else:
-            for artifact_data in artifacts or []:
-                artifact_name = artifact_data.get("name", func.__name__)
-                # Create a clean artifact definition using our helper
-                artifact_spec = create_artifact_spec_from_dict(artifact_data)
-                produced_artifacts[artifact_name] = artifact_spec
+        for artifact_data in artifacts or []:
+            artifact_name = artifact_data.get("name", func.__name__)
+            # Create a clean artifact definition using our helper
+            artifact_spec = create_artifact_spec_from_dict(artifact_data)
+            produced_artifacts[artifact_name] = artifact_spec
 
         # Store the artifact definitions
         func.produced_artifacts = produced_artifacts  # type: ignore
@@ -312,7 +298,7 @@ class PipelineProgress:
             self.progress.update(self.stage_tasks[self.current_stage], completed=percent, refresh=True)
 
 
-PipelineFunctionType = PipelineFunction | Callable[..., None]
+PipelineFunctionType = PipelineFunction
 
 
 @dataclass
@@ -410,10 +396,6 @@ class PipelineContext:
         Returns:
             Path to the cached artifact if found, None otherwise
         """
-        # Skip cache for terminal artifacts
-        if self._artifacts[artifact_name].get("terminal", False):
-            return None
-
         from . import cache
 
         # Get extension from the artifact definition
@@ -438,10 +420,6 @@ class PipelineContext:
             output_path: Path to the artifact file to store
             input_path: Unused, kept for API compatibility
         """
-        # Skip cache for terminal artifacts
-        if self._artifacts[artifact_name].get("terminal", False):
-            return
-
         # Make sure the output file exists before trying to cache it
         if not output_path.exists():
             logging.warning(f"Cannot cache non-existent file: {output_path}")
@@ -544,10 +522,9 @@ class PipelineRunner:
     def should_use_cache(self, func: PipelineFunctionType) -> bool:
         """Determine if caching should be used for this function."""
         # Check if this is a terminal stage that should bypass cache
-        if isinstance(func, PipelineFunction) and hasattr(func, "produced_artifacts"):
-            # Empty artifacts list means terminal function (no caching)
-            if not func.produced_artifacts:
-                return False
+        # Empty artifacts list means terminal function (no caching)
+        if not func.produced_artifacts:
+            return False
 
         # Check if artifact caching is disabled globally
         if not self.options.use_artifact_cache:
@@ -563,10 +540,6 @@ class PipelineRunner:
             Tuple of (cache_hit, artifact_paths)
         """
         artifact_paths: dict[str, Path] = {}
-
-        if not isinstance(func, PipelineFunction) or not hasattr(func, "produced_artifacts"):
-            return False, {}
-
         cache_hit = True  # Assume cache hit until we find a miss
         stage_context = self.context.for_stage(func)
 
@@ -586,9 +559,6 @@ class PipelineRunner:
 
     def store_artifacts_in_cache(self, func: PipelineFunctionType, context: PipelineContext) -> None:
         """Store all artifacts produced by this function in the cache."""
-        if not isinstance(func, PipelineFunction) or not hasattr(func, "produced_artifacts"):
-            return
-
         for artifact_name in func.produced_artifacts:
             artifact_path = context.get_artifact_path(artifact_name)
             if artifact_path.exists():
@@ -596,17 +566,8 @@ class PipelineRunner:
 
     def update_artifacts(self, func: PipelineFunctionType, artifact_paths: dict[str, Path]) -> None:
         """Update the artifacts dictionary with new paths."""
-        produced_artifacts = getattr(func, "produced_artifacts", {}) if isinstance(func, PipelineFunction) else {}
-
         for artifact_name, path in artifact_paths.items():
             self.artifacts[artifact_name] = path
-            # Also store using the stage name as a key if this is the primary artifact
-            if len(produced_artifacts) == 1 or artifact_name == func.__name__:
-                self.artifacts[func.__name__] = path
-
-        # Special handling for terminal artifacts like 'deck'
-        if func.__name__ == "generate_deck" and "deck" in artifact_paths:
-            self.artifacts["deck"] = artifact_paths["deck"]
 
     def get_function_kwargs(self, func: PipelineFunctionType) -> dict[str, Any]:
         """Get the required arguments for this function from artifacts."""
@@ -617,9 +578,6 @@ class PipelineRunner:
         self, func: PipelineFunctionType, context: PipelineContext, kwargs: dict[str, Any]
     ) -> None:
         """Set up input tracking for all artifacts this function produces."""
-        if not isinstance(func, PipelineFunction) or not hasattr(func, "produced_artifacts") or not kwargs:
-            return
-
         # Get all input paths that aren't the context
         input_paths = {name: path for name, path in kwargs.items() if name != "context" and isinstance(path, Path)}
 
@@ -646,45 +604,71 @@ class PipelineRunner:
         cache_hit = False
         artifact_paths: dict[str, Path] = {}
 
-        if use_cache and isinstance(func, PipelineFunction) and hasattr(func, "produced_artifacts"):
+        if use_cache:
             cache_hit, artifact_paths = self.check_persistent_cache(func, kwargs)
 
             if not cache_hit:
                 # Fall back to temp cache if persistent cache misses
-                temp_cache_hit, temp_artifact_paths = self.get_cached_artifacts(func)
-                if temp_cache_hit:
-                    cache_hit = True
-                    artifact_paths = temp_artifact_paths
+                cache_hit, artifact_paths = self.get_cached_artifacts(func)
 
         # Run the function if needed
-        if not use_cache or not cache_hit:
-            logging.debug(f"Running {func.__name__} (use_cache={use_cache}, cache_hit={cache_hit})")
-            func(context=stage_context, **kwargs)
-
-            # Store results in cache after running
-            if use_cache:
-                self.store_artifacts_in_cache(func, stage_context)
-
-                # Also store in persistent cache if configured
-                if isinstance(func, PipelineFunction) and hasattr(func, "produced_artifacts"):
-                    self.store_in_persistent_cache(func, stage_context, kwargs)
-
-            # Update artifacts with paths from generated files
-            if isinstance(func, PipelineFunction) and hasattr(func, "produced_artifacts"):
-                generated_paths: dict[str, Path] = {}
-                for artifact_name in func.produced_artifacts:
-                    artifact_path = stage_context.get_artifact_path(artifact_name)
-                    generated_paths[artifact_name] = artifact_path
-                self.update_artifacts(func, generated_paths)
-        else:
+        if cache_hit:
             # Log cache hit at debug level - use logging module directly to avoid scope issues
             logger.debug(f"Using cached result for {func.__name__}")
             if self.options.debug:
                 self.console.print(f"[green]Using cached result for {func.__name__}[/]")
             # Update artifacts with paths from cache
             self.update_artifacts(func, artifact_paths)
+        else:
+            logging.debug(f"Running {func.__name__} (use_cache={use_cache}, cache_hit={cache_hit})")
+            func(context=stage_context, **kwargs)
+
+            # Store results in cache after running
+            if use_cache:
+                self.store_artifacts_in_cache(func, stage_context)
+                self.store_in_persistent_cache(func, stage_context, kwargs)
+
+            # Update artifacts with paths from generated files
+            generated_paths: dict[str, Path] = {}
+            for artifact_name in func.produced_artifacts:
+                artifact_path = stage_context.get_artifact_path(artifact_name)
+                generated_paths[artifact_name] = artifact_path
+                self.update_artifacts(func, generated_paths)
 
         self.context.progress.complete_stage()
+
+    def compute_output_cache_key(self, artifact_def: ArtifactSpec, inputs: dict[str, Path]) -> str:
+        """
+        Compute a cache key for an artifact.
+
+        Args:
+            artifact_def: The artifact definition
+            inputs: The input files for the artifact
+
+        Returns:
+            An integer hash suitable for cache keys
+        """
+        import hashlib
+
+        # Start with file hash if we have input files
+        content_hash = hashlib.md5()
+        for _, v in sorted(inputs.items()):  # Sort kwargs for consistent hashing
+            with open(v, "rb") as f:
+                content_hash.update(f.read())
+
+        # Add version if specified
+        version = artifact_def.get("version")
+        if version is not None:
+            content_hash.update(str(version).encode())
+
+        # Add resolved hash if specified
+        hash_value = artifact_def.get("hash")
+        if hash_value is not None:
+            resolved_hash = resolve_hash(hash_value, self.context)
+            content_hash.update(str(resolved_hash).encode())
+
+        # Convert to integer for cache compatibility
+        return content_hash.hexdigest()
 
     def check_persistent_cache(self, func: PipelineFunction, kwargs: dict[str, Any]) -> tuple[bool, dict[str, Path]]:
         """
@@ -728,15 +712,12 @@ class PipelineRunner:
                 logger.debug(f"Artifact '{artifact_name}' has caching disabled")
                 continue
 
-            # Resolve the version value
-            version = resolve_version(artifact_def.get("version", 1), self.context)
-            # Convert version to int for cache compatibility
-            version_int = int(str(version))
+            cache_key = self.compute_output_cache_key(artifact_def, kwargs)
             extension = artifact_def.get("extension", "mp3")
 
-            logger.debug(f"Looking for cached artifact '{artifact_name}' with version {version}")
+            logger.debug(f"Looking for cached artifact '{artifact_name}' with hash {cache_key}")
 
-            cached_path, cache_hit = artifact_cache.get_cached_artifact(artifact_name, version_int, kwargs, extension)
+            cached_path, cache_hit = artifact_cache.get_cached_artifact(artifact_name, cache_key, kwargs, extension)
 
             if cache_hit and cached_path:
                 logger.debug(f"✅ Cache HIT for '{artifact_name}' at {cached_path}")
@@ -782,15 +763,14 @@ class PipelineRunner:
         # Use normalized kwargs from this point on
         kwargs = normalized_kwargs
 
-        for artifact_name, artifact_def in func.produced_artifacts.items():
+        for artifact_name, artifact_def in sorted(
+            func.produced_artifacts.items()
+        ):  # Sort artifacts for consistent order
             if not artifact_def.get("cache", False):
                 logger.debug(f"Skipping cache storage for '{artifact_name}' (caching disabled)")
                 continue
 
-            # Resolve the version value
-            version = resolve_version(artifact_def.get("version", 1), self.context)
-            # Convert version to int for cache compatibility
-            version_int = int(str(version))
+            cache_key = self.compute_output_cache_key(artifact_def, kwargs)
             extension = artifact_def.get("extension", "mp3")
 
             artifact_path = context.get_artifact_path(artifact_name)
@@ -799,11 +779,9 @@ class PipelineRunner:
             if artifact_path.exists():
                 try:
                     stored_path = artifact_cache.store_artifact(
-                        artifact_name, version_int, kwargs, artifact_path, extension
+                        artifact_name, cache_key, kwargs, artifact_path, extension
                     )
-                    logger.debug(
-                        f"✅ Stored '{artifact_name}' in persistent cache (version {version}) at {stored_path}"
-                    )
+                    logger.debug(f"✅ Stored '{artifact_name}' in persistent cache (hash {cache_key}) at {stored_path}")
                 except Exception as e:
                     logger.warning(f"❌ Failed to store '{artifact_name}' in persistent cache: {e}")
             else:
@@ -893,7 +871,7 @@ def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -
                 logger.warning(f"Error cleaning up cache: {e}")
 
 
-@pipeline_function(extension="mp3", hash=get_transcode_version)
+@pipeline_function(extension=TRANSCODING_FORMAT, hash=get_transcode_hash)
 def transcode(context: PipelineContext, input_path: Path) -> None:
     """Transcode an audio/video file to an audio file suitable for processing."""
     from .transcoder import transcode_audio
@@ -902,7 +880,7 @@ def transcode(context: PipelineContext, input_path: Path) -> None:
     transcode_audio(input_path, output_path, progress_callback=context.progress.update_progress)
 
 
-@pipeline_function(extension="mp3", hash=get_voice_isolation_version)
+@pipeline_function(extension=VOICE_ISOLATION_FORMAT, version=get_voice_isolation_version())
 def voice_isolation(context: PipelineContext, transcode: Path) -> None:
     """Isolate voice from background noise."""
     from .voice_isolation import isolate_voice
@@ -911,7 +889,7 @@ def voice_isolation(context: PipelineContext, transcode: Path) -> None:
     isolate_voice(transcode, output_path, progress_callback=context.progress.update_progress)
 
 
-@pipeline_function(extension="srt", hash=get_transcription_version)
+@pipeline_function(extension="json", hash=get_transcription_hash)
 def transcribe(context: PipelineContext, voice_isolation: Path | None = None, transcode: Path | None = None) -> None:
     """Transcribe audio to text."""
     from .transcribe import transcribe_audio
@@ -930,7 +908,7 @@ def transcribe(context: PipelineContext, voice_isolation: Path | None = None, tr
     )
 
 
-@pipeline_function(extension="json", hash=get_translation_version)
+@pipeline_function(extension="json", hash=get_translation_hash)
 def translate(context: PipelineContext, transcribe: Path) -> None:
     """Translate transcribed text to target language."""
     from .translate import translate_segments_to_json

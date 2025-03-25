@@ -1,6 +1,5 @@
 """Transcription module using OpenAI API."""
 
-import hashlib
 import json
 import logging
 import os
@@ -13,6 +12,7 @@ from openai import OpenAI
 from rich.progress import Progress, TaskID
 
 from .types import LanguageCode
+from .utils import create_params_hash
 
 # Module logger
 logger = logging.getLogger(__name__)
@@ -155,20 +155,21 @@ class TranscriptionParams(TypedDict):
     prompt: str
 
 
-def get_transcription_version(source_language: LanguageCode | None = None) -> int:
+def get_transcription_hash(source_language: LanguageCode | None = None) -> str:
     """
-    Generate a version number for the transcription function based on its critical parameters.
+    Generate a hash for the transcription function based on its critical parameters.
 
     This creates a hash of the model name, language, and the prompt, which will change
     if any of these parameters change in the transcribe_audio function, ensuring cached
     artifacts are invalidated appropriately.
 
     Args:
-        language: Optional language code
+        source_language: Optional language code
 
     Returns:
-        An integer version derived from the hash of parameters
+        A string hash derived from the parameters
     """
+
     model = TRANSCRIPTION_MODEL
 
     # The prompt from the transcribe_audio function
@@ -190,15 +191,7 @@ def get_transcription_version(source_language: LanguageCode | None = None) -> in
         # Add API version or other critical parameters here
     }
 
-    # Create a stable string representation for hashing
-    param_str = json.dumps(params, sort_keys=True)
-
-    # Hash the parameters and convert to an integer
-    hash_obj = hashlib.sha256(param_str.encode())
-    # Use the first 8 bytes of the hash as an integer
-    version = abs(int.from_bytes(hash_obj.digest()[:4], byteorder="big"))
-
-    return version
+    return create_params_hash(params)
 
 
 def transcribe_audio(

@@ -110,10 +110,14 @@ The pipeline implements a two-level caching system:
      ```python
      # Simple usage with default artifact name (function name)
      @pipeline_function(extension="mp3", hash=get_version_function)
-     
+
+     # Using version instead of hash
+     @pipeline_function(extension="mp3", version=1)
+     @pipeline_function(extension="mp3", version="1.0")
+
      # For terminal functions that don't produce artifacts
      @pipeline_function(artifacts=[])
-     
+
      # With multiple artifacts
      @pipeline_function(artifacts=[
          {"name": "artifact1", "extension": "mp3", "cache": True, "version": 1},

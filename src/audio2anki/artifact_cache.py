@@ -46,7 +46,7 @@ class ArtifactCache:
                 CREATE TABLE IF NOT EXISTS artifacts (
                     artifact_id TEXT PRIMARY KEY,
                     artifact_name TEXT NOT NULL,
-                    version INTEGER NOT NULL,
+                    key TEXT NOT NULL,
                     input_hash TEXT NOT NULL,
                     file_path TEXT NOT NULL,
                     created_at REAL NOT NULL,
@@ -64,10 +64,73 @@ class ArtifactCache:
 
             # Create index for faster lookups
             cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_name_hash_version ON artifacts (artifact_name, input_hash, version)"
+                "CREATE INDEX IF NOT EXISTS idx_name_hash_key ON artifacts (artifact_name, input_hash, key)"
             )
 
-            conn.commit()
+            # Check if we need to migrate from an older schema
+            cursor.execute("PRAGMA table_info(artifacts)")
+            columns = [info[1] for info in cursor.fetchall()]
+            
+            # If 'key' column doesn't exist but 'version' does, we need to migrate
+            if 'key' not in columns and 'version' in columns:
+                logger.info("Migrating database schema: adding 'key' column")
+                try:
+                    # Create a new table with the updated schema
+                    cursor.execute("""
+                        CREATE TABLE artifacts_new (
+                            artifact_id TEXT PRIMARY KEY,
+                            artifact_name TEXT NOT NULL,
+                            key TEXT NOT NULL,
+                            input_hash TEXT NOT NULL,
+                            file_path TEXT NOT NULL,
+                            created_at REAL NOT NULL,
+                            last_accessed_at REAL NOT NULL
+                        )
+                    """)
+                    
+                    # Copy data from old table to new table, using version as key
+                    cursor.execute("""
+                        INSERT INTO artifacts_new
+                        SELECT artifact_id, artifact_name, version, input_hash, file_path, created_at, last_accessed_at
+                        FROM artifacts
+                    """)
+                    
+                    # Drop the old table and rename the new one
+                    cursor.execute("DROP TABLE artifacts")
+                    cursor.execute("ALTER TABLE artifacts_new RENAME TO artifacts")
+                    
+                    # Recreate the index
+                    cursor.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_name_hash_key ON artifacts (artifact_name, input_hash, key)"
+                    )
+                    
+                    conn.commit()
+                    logger.info("Database schema migration completed successfully")
+                except Exception as e:
+                    logger.error(f"Error during database migration: {e}")
+                    # If migration fails, we'll recreate the database from scratch
+                    cursor.execute("DROP TABLE IF EXISTS artifacts")
+                    cursor.execute("DROP TABLE IF EXISTS artifacts_new")
+                    cursor.execute("""
+                        CREATE TABLE artifacts (
+                            artifact_id TEXT PRIMARY KEY,
+                            artifact_name TEXT NOT NULL,
+                            key TEXT NOT NULL,
+                            input_hash TEXT NOT NULL,
+                            file_path TEXT NOT NULL,
+                            created_at REAL NOT NULL,
+                            last_accessed_at REAL NOT NULL
+                        )
+                    """)
+                    conn.commit()
+                    logger.info("Created new database schema after migration failure")
+            
+            # Also update the index if needed
+            if 'key' in columns and 'version' not in columns:
+                cursor.execute("DROP INDEX IF EXISTS idx_name_hash_version")
+                cursor.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_name_hash_key ON artifacts (artifact_name, input_hash, key)"
+                )
 
     def _compute_input_hash(self, inputs: dict[str, Any]) -> str:
         """
@@ -128,24 +191,24 @@ class ArtifactCache:
         return hasher.hexdigest()
 
     def get_artifact_path(
-        self, artifact_name: str, version: int, inputs: dict[str, Any], extension: str
+        self, artifact_name: str, key: str, inputs: dict[str, Any], extension: str
     ) -> tuple[Path | None, bool]:
         """
         Check if an artifact exists in the cache and return its path.
 
         Args:
             artifact_name: Name of the artifact
-            version: Version number of the pipeline function
+            key: Key of the artifact
             inputs: Dictionary of input parameters
             extension: File extension for the artifact
 
         Returns:
             Tuple of (Path to the artifact if found, otherwise None, boolean indicating cache hit)
         """
-        logger.debug(f"Checking cache for artifact: {artifact_name} (version {version})")
+        logger.debug(f"Checking cache for artifact: {artifact_name} (key {key})")
 
         input_hash = self._compute_input_hash(inputs)
-        artifact_id = f"{artifact_name}_{input_hash}_{version}"
+        artifact_id = f"{artifact_name}_{key}_{input_hash}"
 
         logger.debug(f"Looking for artifact_id: {artifact_id}")
 
@@ -183,14 +246,14 @@ class ArtifactCache:
         return file_path, False
 
     def store_artifact(
-        self, artifact_name: str, version: int, inputs: dict[str, Any], data_path: Path, extension: str
+        self, artifact_name: str, key: str, inputs: dict[str, Any], data_path: Path, extension: str
     ) -> Path:
         """
         Store an artifact in the cache.
 
         Args:
             artifact_name: Name of the artifact
-            version: Version number of the pipeline function
+            key: Key of the artifact
             inputs: Dictionary of input parameters
             data_path: Path to the file to store
             extension: File extension for the artifact
@@ -198,10 +261,10 @@ class ArtifactCache:
         Returns:
             Path to the stored artifact
         """
-        logger.debug(f"Storing artifact {artifact_name} (version {version}) from {data_path}")
+        logger.debug(f"Storing artifact {artifact_name} (key {key}) from {data_path}")
 
         input_hash = self._compute_input_hash(inputs)
-        artifact_id = f"{artifact_name}_{input_hash}_{version}"
+        artifact_id = f"{artifact_name}_{key}_{input_hash}"
 
         logger.debug(f"Generated artifact_id: {artifact_id}")
 
@@ -247,10 +310,10 @@ class ArtifactCache:
             cursor.execute(
                 """
                 INSERT OR REPLACE INTO artifacts
-                (artifact_id, artifact_name, version, input_hash, file_path, created_at, last_accessed_at)
+                (artifact_id, artifact_name, key, input_hash, file_path, created_at, last_accessed_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (artifact_id, artifact_name, version, input_hash, str(dest_path), current_time, current_time),
+                (artifact_id, artifact_name, key, input_hash, str(dest_path), current_time, current_time),
             )
             conn.commit()
             logger.debug(f"Stored metadata in database for {artifact_id}")
@@ -431,30 +494,30 @@ def get_artifact_cache() -> ArtifactCache:
 
 
 def get_cached_artifact(
-    artifact_name: str, version: int, inputs: dict[str, Any], extension: str
+    artifact_name: str, key: str, inputs: dict[str, Any], extension: str
 ) -> tuple[Path | None, bool]:
     """
     Get an artifact from the cache if it exists.
 
     Args:
         artifact_name: Name of the artifact
-        version: Version number of the pipeline function
+        key: Key of the artifact
         inputs: Dictionary of input parameters
         extension: File extension for the artifact
 
     Returns:
         Tuple of (Path to the artifact if found, otherwise None, boolean indicating cache hit)
     """
-    return get_artifact_cache().get_artifact_path(artifact_name, version, inputs, extension)
+    return get_artifact_cache().get_artifact_path(artifact_name, key, inputs, extension)
 
 
-def store_artifact(artifact_name: str, version: int, inputs: dict[str, Any], data_path: Path, extension: str) -> Path:
+def store_artifact(artifact_name: str, key: str, inputs: dict[str, Any], data_path: Path, extension: str) -> Path:
     """
     Store an artifact in the cache.
 
     Args:
         artifact_name: Name of the artifact
-        version: Version number of the pipeline function
+        key: Key of the artifact
         inputs: Dictionary of input parameters
         data_path: Path to the file to store
         extension: File extension for the artifact
@@ -462,7 +525,7 @@ def store_artifact(artifact_name: str, version: int, inputs: dict[str, Any], dat
     Returns:
         Path to the stored artifact
     """
-    return get_artifact_cache().store_artifact(artifact_name, version, inputs, data_path, extension)
+    return get_artifact_cache().store_artifact(artifact_name, key, inputs, data_path, extension)
 
 
 def clear_cache() -> tuple[int, int]:

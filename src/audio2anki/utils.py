@@ -1,8 +1,12 @@
 """Utility functions for audio2anki."""
 
+import hashlib
+import json
 import re
 import unicodedata
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 
 def format_bytes(size_bytes: int) -> str:
@@ -149,3 +153,21 @@ def is_deck_folder(path: Path) -> bool:
         logger.debug(f"Confirmed {path} is a valid deck folder")
 
     return result
+
+
+def create_params_hash(params: Mapping[str, Any]) -> str:
+    """
+    Create a shortened hash string from a parameter dictionary for versioning purposes.
+
+    Args:
+        params: Dictionary of parameters that affect the output
+
+    Returns:
+        An 8-character hash string derived from the parameters
+    """
+    # Create a stable string representation for hashing
+    param_str = json.dumps(params, sort_keys=True)
+
+    # Hash the parameters and get the first 8 characters of the hex digest
+    hash_obj = hashlib.md5(param_str.encode())
+    return hash_obj.hexdigest()[:8]

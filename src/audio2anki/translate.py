@@ -1,7 +1,5 @@
 """Translation module using OpenAI or DeepL API."""
 
-import hashlib
-import json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import Enum
@@ -14,6 +12,7 @@ from rich.progress import Progress, TaskID
 
 from .transcribe import TranscriptionSegment, load_transcript, save_transcript
 from .types import LanguageCode
+from .utils import create_params_hash
 
 
 class TranslationProvider(str, Enum):
@@ -75,11 +74,11 @@ TRANSLATION_PROMPTS = {
 }
 
 
-def get_translation_version(
+def get_translation_hash(
     source_language: LanguageCode | None, target_language: LanguageCode, translation_provider: TranslationProvider
-) -> int:
+) -> str:
     """
-    Generate a version number for the translation function based on its critical parameters.
+    Generate a hash for the translation function based on its critical parameters.
 
     This creates a hash of the source language, target language, provider, and the system prompts
     used for translation and reading generation, which will change if any of these parameters
@@ -91,8 +90,9 @@ def get_translation_version(
         translation_provider: The provider used for translation (OpenAI or DeepL)
 
     Returns:
-        An integer version derived from the hash of parameters
+        A string hash derived from the parameters
     """
+
     # Create a dictionary of parameters that affect the output
     params: TranslationParams = {
         "source_language": source_language,
@@ -104,15 +104,7 @@ def get_translation_version(
         "openai_model": OPENAI_MODEL,
     }
 
-    # Create a stable string representation for hashing
-    param_str = json.dumps(params, sort_keys=True)
-
-    # Hash the parameters and convert to an integer
-    hash_obj = hashlib.sha256(param_str.encode())
-    # Use the first 4 bytes of the hash as an integer
-    version = abs(int.from_bytes(hash_obj.digest()[:4], byteorder="big"))
-
-    return version
+    return create_params_hash(params)
 
 
 def get_pinyin(text: str, client: OpenAI) -> str:

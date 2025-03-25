@@ -12,6 +12,8 @@ import soundfile as sf
 
 logger = logging.getLogger(__name__)
 
+VOICE_ISOLATION_FORMAT = "mp3"
+
 API_BASE_URL = "https://api.elevenlabs.io/v1"
 
 
