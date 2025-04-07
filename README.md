@@ -11,6 +11,9 @@ Convert audio and video files into Anki flashcard decks with translations.
 
 ![audio2anki](./docs/preview.png)
 
+For related language learning resources, visit [Oliver Steele's Language
+Learning Resources](https://osteele.com/topics/language-learning/).
+
 ## Features
 
 - 🎵 Process audio files (mp3, wav, etc.) and video files
