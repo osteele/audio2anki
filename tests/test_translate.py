@@ -31,21 +31,20 @@ def test_translate_with_openai(input_text: str, expected_translation: str) -> No
     mock_response = Mock()
     mock_response.choices = [mock_choice]
 
-    with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-        with patch("openai.OpenAI") as mock_openai:
-            mock_client = MagicMock()
-            mock_client.chat.completions.create.return_value = mock_response
-            mock_openai.return_value = mock_client
+    with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}), patch("openai.OpenAI") as mock_openai:
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai.return_value = mock_client
 
-            with Progress() as progress:
-                task_id = progress.add_task("Translating", total=1)
+        with Progress() as progress:
+            task_id = progress.add_task("Translating", total=1)
 
-                # Translate segment - we'll check the functionality but not exact values
-                result = translate_segments([segment], LanguageCode("en"), task_id, progress)
+            # Translate segment - we'll check the functionality but not exact values
+            result = translate_segments([segment], LanguageCode("en"), task_id, progress)
 
-                # Verify translation was assigned (not checking exact value due to test stability)
-                assert len(result) == 1
-                assert result[0].translation is not None
+            # Verify translation was assigned (not checking exact value due to test stability)
+            assert len(result) == 1
+            assert result[0].translation is not None
 
 
 def test_translate_with_deepl() -> None:
@@ -118,32 +117,31 @@ def test_error_handling() -> None:
     """Test error handling during translation."""
     segment = TranscriptionSegment(start=0.0, end=1.0, text="Error test", translation=None)
 
-    with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-        with patch("openai.OpenAI") as mock_openai:
-            # Setup error response
-            mock_client = MagicMock()
-            mock_response = Mock(spec=httpx.Response)
-            mock_response.status_code = 401
-            mock_response.text = "API error"
-            mock_response.request = Mock(spec=httpx.Request)
+    with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}), patch("openai.OpenAI") as mock_openai:
+        # Setup error response
+        mock_client = MagicMock()
+        mock_response = Mock(spec=httpx.Response)
+        mock_response.status_code = 401
+        mock_response.text = "API error"
+        mock_response.request = Mock(spec=httpx.Request)
 
-            # Make API call fail
-            mock_client.chat.completions.create.side_effect = httpx.HTTPStatusError(
-                "401 Unauthorized",
-                request=mock_response.request,
-                response=mock_response,
-            )
-            mock_openai.return_value = mock_client
+        # Make API call fail
+        mock_client.chat.completions.create.side_effect = httpx.HTTPStatusError(
+            "401 Unauthorized",
+            request=mock_response.request,
+            response=mock_response,
+        )
+        mock_openai.return_value = mock_client
 
-            with Progress() as progress:
-                task_id = progress.add_task("Translating", total=1)
+        with Progress() as progress:
+            task_id = progress.add_task("Translating", total=1)
 
-                # Translate segment - should handle error and return original segment
-                result = translate_segments([segment], LanguageCode("en"), task_id, progress)
+            # Translate segment - should handle error and return original segment
+            result = translate_segments([segment], LanguageCode("en"), task_id, progress)
 
-                # Verify result - should return the original segment with text as translation
-                assert len(result) == 1
-                assert result[0].translation == segment.text
+            # Verify result - should return the original segment with text as translation
+            assert len(result) == 1
+            assert result[0].translation == segment.text
 
 
 def test_empty_response_handling() -> None:
@@ -158,28 +156,26 @@ def test_empty_response_handling() -> None:
     mock_response = Mock()
     mock_response.choices = [mock_choice]
 
-    with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-        with patch("openai.OpenAI") as mock_openai:
-            mock_client = MagicMock()
-            mock_client.chat.completions.create.return_value = mock_response
-            mock_openai.return_value = mock_client
+    with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}), patch("openai.OpenAI") as mock_openai:
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai.return_value = mock_client
 
-            with Progress() as progress:
-                task_id = progress.add_task("Translating", total=1)
+        with Progress() as progress:
+            task_id = progress.add_task("Translating", total=1)
 
-                # Translate segment - should handle empty response
-                result = translate_segments([segment], LanguageCode("en"), task_id, progress)
+            # Translate segment - should handle empty response
+            result = translate_segments([segment], LanguageCode("en"), task_id, progress)
 
-                # Verify result - should return original text as translation
-                assert len(result) == 1
-                assert result[0].translation == segment.text
+            # Verify result - should return original text as translation
+            assert len(result) == 1
+            assert result[0].translation == segment.text
 
 
 def test_no_api_keys_raises_error() -> None:
     """Test that missing API keys raise appropriate errors."""
-    with patch.dict(os.environ, {}, clear=True):
-        with Progress() as progress:
-            task_id = progress.add_task("test", total=1)
-            with pytest.raises(ValueError) as exc:
-                translate_segments([], LanguageCode("en"), task_id, progress)
-            assert "OPENAI_API_KEY environment variable is required" in str(exc.value)
+    with patch.dict(os.environ, {}, clear=True), Progress() as progress:
+        task_id = progress.add_task("test", total=1)
+        with pytest.raises(ValueError) as exc:
+            translate_segments([], LanguageCode("en"), task_id, progress)
+        assert "OPENAI_API_KEY environment variable is required" in str(exc.value)

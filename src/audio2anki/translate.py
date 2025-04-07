@@ -285,7 +285,7 @@ def translate_single_segment(
         return translated_segment, reading_segment, True
 
     except Exception as e:
-        print(f"Translation failed: {str(e)}")
+        print(f"Translation failed: {e!s}")
         return segment, None, False
 
 
@@ -369,7 +369,7 @@ def translate_segments_to_json(
                 use_deepl = True
                 progress.update(task_id, description="Translating segments using DeepL...")
             except Exception as e:
-                print(f"Warning: Failed to initialize DeepL ({str(e)}), falling back to OpenAI")
+                print(f"Warning: Failed to initialize DeepL ({e!s}), falling back to OpenAI")
                 # Fall back to OpenAI
                 translator = openai_client
                 use_deepl = False
@@ -470,7 +470,7 @@ def translate_segments(
             translator = deepl.Translator(deepl_token)
             use_deepl = True
         except Exception as e:
-            print(f"Warning: Failed to initialize DeepL ({str(e)}), falling back to OpenAI")
+            print(f"Warning: Failed to initialize DeepL ({e!s}), falling back to OpenAI")
             translator = openai_client
             use_deepl = False
 

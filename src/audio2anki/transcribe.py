@@ -40,7 +40,7 @@ def format_timestamp(seconds: float) -> str:
     hours = int(seconds // 3600)
     minutes = int((seconds % 3600) // 60)
     secs = int(seconds % 60)
-    millis = int(round((seconds - int(seconds)) * 1000))
+    millis = round((seconds - int(seconds)) * 1000)
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
 
@@ -269,7 +269,7 @@ def transcribe_audio(
     except httpx.HTTPStatusError as e:
         raise RuntimeError(f"Transcription failed: {e.response.status_code} {e.response.reason_phrase}") from e
     except Exception as e:
-        raise RuntimeError(f"Transcription failed: {str(e)}") from e
+        raise RuntimeError(f"Transcription failed: {e!s}") from e
 
     # Process segments
     segments: list[TranscriptionSegment] = []

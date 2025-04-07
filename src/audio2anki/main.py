@@ -258,7 +258,7 @@ def edit():
 @config.command()
 @click.argument("key")
 @click.argument("value")
-def set(key: str, value: str):
+def set(key: str, value: str):  # noqa: A001
     """Set a configuration value."""
     success, message = set_config_value(key, value)
     if success:
@@ -268,7 +268,7 @@ def set(key: str, value: str):
 
 
 @config.command()
-def list():
+def list():  # noqa: A001
     """List all configuration settings."""
     config = load_config()
     config_dict = config.to_dict()

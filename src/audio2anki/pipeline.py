@@ -532,10 +532,7 @@ class PipelineRunner:
             return False
 
         # Check if artifact caching is disabled globally
-        if not self.options.use_artifact_cache:
-            return False
-
-        return True
+        return self.options.use_artifact_cache
 
     def get_cached_artifacts(self, func: PipelineFunctionType) -> tuple[bool, dict[str, Path]]:
         """
@@ -623,7 +620,7 @@ class PipelineRunner:
         input_paths = {name: path for name, path in kwargs.items() if name != "context" and isinstance(path, Path)}
 
         # For each artifact, set up all inputs
-        for artifact_name in func.produced_artifacts.keys():
+        for artifact_name in func.produced_artifacts:
             for _name, input_path in input_paths.items():
                 context.update_stage_input(artifact_name, input_path)
 
@@ -863,8 +860,8 @@ class PipelineRunner:
                     error_type = "VALIDATION_ERROR"
 
                 # Enhanced logging with context
-                logging.error(f"{error_type} in {func.__name__}: {str(e)}", exc_info=True)
-                self.console.print(f"[red]Error in {func.__name__} ({error_type}): {str(e)}[/]")
+                logging.error(f"{error_type} in {func.__name__}: {e!s}", exc_info=True)
+                self.console.print(f"[red]Error in {func.__name__} ({error_type}): {e!s}[/]")
                 raise
 
         # Get the output folder for the final deck
