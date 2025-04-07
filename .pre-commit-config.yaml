@@ -1,0 +1,38 @@
+repos:
+  - repo: local
+    hooks:
+      - id: just-format
+        name: Format code
+        description: Format code with ruff
+        entry: just format
+        language: system
+        pass_filenames: false
+        types: [python]
+        stages: [pre-commit]
+
+      - id: just-lint
+        name: Lint code
+        description: Run linting checks
+        entry: just lint
+        language: system
+        pass_filenames: false
+        types: [python]
+        stages: [pre-commit]
+
+      - id: just-typecheck
+        name: Type check
+        description: Run type checking with pyright
+        entry: just typecheck
+        language: system
+        pass_filenames: false
+        types: [python]
+        stages: [pre-commit]
+
+      - id: just-test
+        name: Run tests
+        description: Run pytest tests
+        entry: just test
+        language: system
+        pass_filenames: false
+        types: [python]
+        stages: [pre-commit]

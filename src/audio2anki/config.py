@@ -3,12 +3,12 @@
 import logging
 import os
 import subprocess
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import tomli_w
-import tomllib
 
 logger = logging.getLogger(__name__)
 
