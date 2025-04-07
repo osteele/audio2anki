@@ -1,5 +1,11 @@
 # audio2anki
 
+[![PyPI version](https://img.shields.io/pypi/v/audio2anki.svg)](https://pypi.org/project/audio2anki/)
+[![Python Version](https://img.shields.io/pypi/pyversions/audio2anki.svg)](https://pypi.org/project/audio2anki/)
+[![License](https://img.shields.io/github/license/osteele/audio2anki.svg)](https://github.com/osteele/audio2anki/blob/main/LICENSE)
+[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
+[![CI](https://github.com/osteele/audio2anki/actions/workflows/ci.yml/badge.svg)](https://github.com/osteele/audio2anki/actions/workflows/ci.yml)
+
 Convert audio and video files into Anki flashcard decks with translations.
 
 `audio2anki` helps language learners create study materials from audio and video content. It automatically:
