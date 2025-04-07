@@ -11,6 +11,9 @@ Convert audio and video files into Anki flashcard decks with translations.
 
 ![audio2anki](./docs/preview.png)
 
+For related language learning resources, visit [Oliver Steele's Language
+Learning Resources](https://osteele.com/topics/language-learning/).
+
 ## Features
 
 - 🎵 Process audio files (mp3, wav, etc.) and video files
@@ -27,8 +30,31 @@ Convert audio and video files into Anki flashcard decks with translations.
 
 ## Installation
 
+You can install audio2anki using either `uv`, `pipx`, or `pip`:
+
+### Using uv
+
+1. [Install `uv`](https://docs.astral.sh/uv/getting-started/installation/) if you don't have it already.
+2. Install `audio2anki`:
+   ```bash
+   uv tool install audio2anki
+   ```
+
+### Using pipx
+
+1. [Install `pipx`](https://pipx.pypa.io/stable/installation/) if you don't have it already.
+
+2. Install `audio2anki`:
+   ```bash
+   pipx install audio2anki
+   ```
+
+### Using pip (not recommended)
+
+This method doesn't require a third-party tool, but it is not recommended as it will install audio2anki in the current Python environment, which may cause conflicts with other packages.
+
 ```bash
-uv tool install https://github.com/osteele/audio2anki.git
+pip install audio2anki
 ```
 
 ## Usage
@@ -166,6 +192,10 @@ The script creates:
 just check  # Run linting and type checking
 just test   # Run tests
 ```
+
+## Related Projects
+
+- [add2anki](https://github.com/osteele/add2anki) - Convert vocabulary lists to Anki flashcard decks
 
 ## License
 
