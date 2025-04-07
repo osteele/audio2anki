@@ -87,7 +87,7 @@ def is_metadata_file(path: Path) -> bool:
 
     # IDE/Editor metadata files
     ide_patterns = {".idea", ".vscode"}
-    if path.name.endswith((".swp", "~")) or path.name.startswith(".") and path.name.endswith(".swp"):
+    if path.name.endswith((".swp", "~")) or (path.name.startswith(".") and path.name.endswith(".swp")):
         return True
 
     return path.name in macos_patterns | windows_patterns | linux_patterns | ide_patterns
