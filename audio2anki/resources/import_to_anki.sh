@@ -8,16 +8,8 @@ if ! command -v uv &> /dev/null; then
   export PATH="$HOME/.cargo/bin:$PATH"
 fi
 
-# Check if Anki is running
-if ! pgrep -x "Anki" > /dev/null; then
-  echo "Starting Anki..."
-  open -a Anki --background
-  # Wait for Anki to start
-  sleep 5
-fi
-
 # Run the add2anki tool
 echo "Importing cards to Anki..."
-uvx add2anki@0.1.1 deck.csv --tags audio2anki
+uvx add2anki@0.1.2 deck.csv --tags audio2anki
 
 echo "Import complete!"
