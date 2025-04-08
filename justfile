@@ -10,14 +10,14 @@ clean:
 
 # Format code
 format:
-    uv run --dev ruff format src tests
+    uv run --dev ruff format audio2anki tests
 
 fix: format
-    uv run --dev ruff check --fix --unsafe-fixes src tests
+    uv run --dev ruff check --fix --unsafe-fixes audio2anki tests
 
 # Run linting
 lint:
-    uv run --dev ruff check src tests
+    uv run --dev ruff check audio2anki tests
 
 # Publish to PyPI
 publish: clean
@@ -33,4 +33,4 @@ test *ARGS:
 
 # Run type checking
 typecheck:
-    uv run --dev pyright src tests
+    uv run --dev pyright audio2anki tests

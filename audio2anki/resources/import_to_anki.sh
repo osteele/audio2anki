@@ -18,6 +18,6 @@ fi
 
 # Run the add2anki tool
 echo "Importing cards to Anki..."
-uvx git+https://github.com/osteele/add2anki@audio2anki-support-1 deck.csv --tags audio2anki
+uvx add2anki@0.1.1 deck.csv --tags audio2anki
 
 echo "Import complete!"

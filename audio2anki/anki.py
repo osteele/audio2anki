@@ -37,7 +37,7 @@ The script will:
 
 ### Option 2: Manual Installation with uv
 1. Install `uv` from https://docs.astral.sh/uv/getting-started/installation/
-2. Run: `uv tool git+https://github.com/osteele/add2anki@release deck.csv --tags audio2anki`
+2. Run: `uv tool add2anki deck.csv --tags audio2anki`
 
 ### Option 3: Manual Import
 1. Open Anki
