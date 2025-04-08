@@ -127,9 +127,9 @@ def create_anki_deck(
         segments = split_audio(input_audio_file, segments, media_dir, task_id, progress)
 
     # Initialize columns based on language
-    target_language_name = (target_language or "Translation").capitalize()
+    target_language_name = "English" if target_language == "en" else (target_language or "Translation").capitalize()
     if source_language == "zh":
-        columns = ["Hanzi", "Color", "Pinyin", target_language_name, "Audio"]
+        columns = ["Hanzi", "Pinyin", target_language_name, "Audio"]
     elif source_language == "ja":
         columns = ["Japanese", "Pronunciation", target_language_name, "Audio"]
     else:
@@ -165,7 +165,6 @@ def create_anki_deck(
                     "Hanzi": segment.text,
                     "Japanese": segment.text,
                     "Text": segment.text,
-                    "Color": "",  # Empty color field
                     "Pinyin": segment.pronunciation or "",
                     "Pronunciation": segment.pronunciation or "",
                     target_language_name: segment.translation or "",
