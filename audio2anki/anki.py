@@ -10,6 +10,7 @@ from typing import Any
 from rich.progress import Progress, TaskID
 
 from .audio_utils import split_audio
+from .config import load_config
 from .models import AudioSegment
 from .pipeline import PipelineProgress
 
@@ -32,7 +33,7 @@ This export package contains:
 
 The script will:
 - Install `uv` if it's not already present (via https://docs.astral.sh/uv/getting-started/installation/)
-- Launch Anki if it's not already running
+- Launch Anki if it's not already running (macOS only)
 - Import the cards directly into your selected deck using the `add2anki` tool
 
 ### Option 2: Manual Installation with uv
@@ -124,7 +125,16 @@ def create_anki_deck(
 
     # Split audio into segments if input file is provided
     if input_audio_file and progress and task_id:
-        segments = split_audio(input_audio_file, segments, media_dir, task_id, progress)
+        config = load_config()
+        segments = split_audio(
+            input_audio_file,
+            segments,
+            media_dir,
+            task_id,
+            progress,
+            silence_thresh=config.silence_thresh,
+            padding_ms=config.audio_padding_ms,
+        )
 
     # Initialize columns based on language
     target_language_name = "English" if target_language == "en" else (target_language or "Translation").capitalize()

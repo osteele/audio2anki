@@ -39,6 +39,8 @@ def temp_config_file(temp_config_dir: Path) -> Generator[Path, None, None]:
     cache_expiry_days = 14
     voice_isolation_provider = "eleven_labs"
     transcription_provider = "openai_whisper"
+    audio_padding_ms = 200
+    silence_thresh = -40
     """
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(config_content)
@@ -77,6 +79,8 @@ def test_create_default_config(temp_config_dir: Path) -> None:
     assert 'transcription_provider = "openai_whisper"' in content
     assert "use_artifact_cache = true" in content
     assert "max_artifact_cache_size_mb = 2000" in content
+    assert "audio_padding_ms = 200" in content
+    assert "silence_thresh = -40" in content
 
 
 def test_load_config_with_file(temp_config_file: Path) -> None:
@@ -99,6 +103,8 @@ def test_load_config_no_file(temp_config_dir: Path) -> None:
     assert config.transcription_provider == "openai_whisper"
     assert config.use_artifact_cache is True
     assert config.max_artifact_cache_size_mb == 2000
+    assert config.audio_padding_ms == 200
+    assert config.silence_thresh == -40
 
 
 def test_load_config_invalid_file(temp_config_dir: Path) -> None:
@@ -114,6 +120,8 @@ def test_load_config_invalid_file(temp_config_dir: Path) -> None:
     assert config.cache_expiry_days == 14
     assert config.use_artifact_cache is True
     assert config.max_artifact_cache_size_mb == 2000
+    assert config.audio_padding_ms == 200
+    assert config.silence_thresh == -40
 
 
 def test_config_validation_valid() -> None:
@@ -126,6 +134,8 @@ def test_config_validation_valid() -> None:
         transcription_provider="openai_whisper",
         use_artifact_cache=True,
         max_artifact_cache_size_mb=2000,
+        audio_padding_ms=200,
+        silence_thresh=-40,
     )
     errors = validate_config(config)
     assert not errors
@@ -141,6 +151,8 @@ def test_config_validation_invalid() -> None:
         transcription_provider="invalid_provider",  # Invalid value
         use_artifact_cache=True,
         max_artifact_cache_size_mb=50,  # Invalid value (too small)
+        audio_padding_ms=200,
+        silence_thresh=-40,
     )
     errors = validate_config(config)
     assert len(errors) == 4
@@ -156,6 +168,8 @@ def test_config_to_from_dict() -> None:
         transcription_provider="openai_whisper",
         use_artifact_cache=True,
         max_artifact_cache_size_mb=2000,
+        audio_padding_ms=200,
+        silence_thresh=-40,
     )
 
     # Convert to dict and back
@@ -168,6 +182,8 @@ def test_config_to_from_dict() -> None:
     assert restored_config.cache_expiry_days == original_config.cache_expiry_days
     assert restored_config.voice_isolation_provider == original_config.voice_isolation_provider
     assert restored_config.transcription_provider == original_config.transcription_provider
+    assert restored_config.audio_padding_ms == original_config.audio_padding_ms
+    assert restored_config.silence_thresh == original_config.silence_thresh
 
 
 @pytest.fixture
@@ -201,6 +217,8 @@ def test_validate_config(test_env: CacheTestEnv) -> None:
         transcription_provider="openai_whisper",
         use_artifact_cache=True,
         max_artifact_cache_size_mb=2000,
+        audio_padding_ms=200,
+        silence_thresh=-40,
     )
 
     errors = config.validate_config(cfg)

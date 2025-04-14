@@ -21,6 +21,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "transcription_provider": "openai_whisper",
     "use_artifact_cache": True,
     "max_artifact_cache_size_mb": 2000,  # 2GB default limit
+    "audio_padding_ms": 200,  # Add 200ms padding to audio segments
+    "silence_thresh": -40,  # Silence threshold in dB
 }
 
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "audio2anki"
@@ -38,6 +40,8 @@ class Config:
     transcription_provider: str
     use_artifact_cache: bool
     max_artifact_cache_size_mb: int
+    audio_padding_ms: int
+    silence_thresh: int
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Config":
@@ -50,6 +54,8 @@ class Config:
             transcription_provider=data["transcription_provider"],
             use_artifact_cache=data.get("use_artifact_cache", True),
             max_artifact_cache_size_mb=data.get("max_artifact_cache_size_mb", 2000),
+            audio_padding_ms=data.get("audio_padding_ms", 200),
+            silence_thresh=data.get("silence_thresh", -40),
         )
 
     def to_dict(self) -> dict[str, bool | int | str]:
@@ -62,6 +68,8 @@ class Config:
             "transcription_provider": self.transcription_provider,
             "use_artifact_cache": self.use_artifact_cache,
             "max_artifact_cache_size_mb": self.max_artifact_cache_size_mb,
+            "audio_padding_ms": self.audio_padding_ms,
+            "silence_thresh": self.silence_thresh,
         }
 
 
@@ -100,6 +108,9 @@ def create_default_config() -> None:
             f.write("use_artifact_cache = true\n")
             f.write("cache_expiry_days = 14\n")
             f.write("max_artifact_cache_size_mb = 2000\n\n")
+            f.write("# Audio processing settings\n")
+            f.write("audio_padding_ms = 200  # Padding in milliseconds to add to each segment\n")
+            f.write("silence_thresh = -40  # Silence threshold in dB\n\n")
             f.write("# API providers\n")
             f.write('voice_isolation_provider = "eleven_labs"\n')
             f.write('transcription_provider = "openai_whisper"\n')

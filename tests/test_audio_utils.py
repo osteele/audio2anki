@@ -7,7 +7,7 @@ import pytest
 from pydub import AudioSegment as PydubSegment
 from rich.progress import Progress, TaskID
 
-from audio2anki.audio_utils import compute_file_hash, split_audio, trim_silence
+from audio2anki.audio_utils import compute_file_hash, is_voice_active, split_audio, trim_silence
 from audio2anki.models import AudioSegment
 
 
@@ -51,6 +51,42 @@ def test_split_audio(test_audio_file: Path, tmp_path: Path) -> None:
         assert (output_dir / segment.audio_file).exists()
 
 
+def test_split_audio_with_padding(test_audio_file: Path, tmp_path: Path) -> None:
+    """Test audio splitting with padding."""
+    # Create a test segment in the middle so we can pad it
+    segments = [
+        AudioSegment(start=0.25, end=0.75, text="Middle"),
+    ]
+
+    # Create mock progress tracking
+    progress = Mock(spec=Progress)
+    task_id = Mock(spec=TaskID)
+
+    # Create output directory
+    output_dir = tmp_path / "media"
+
+    # Split audio with padding
+    result_segments = split_audio(
+        test_audio_file,
+        segments,
+        output_dir,
+        task_id,
+        progress,
+        padding_ms=200,  # Add 200ms padding
+    )
+
+    # Check that output file was created
+    assert output_dir.exists()
+    assert len(list(output_dir.glob("*.mp3"))) == 1
+
+    # Check that segment was updated with audio file name
+    segment = result_segments[0]
+    assert segment.audio_file is not None
+    assert segment.audio_file.startswith("audio2anki_")
+    assert segment.audio_file.endswith(".mp3")
+    assert (output_dir / segment.audio_file).exists()
+
+
 def test_trim_silence() -> None:
     """Test silence trimming functionality."""
     # Create a test audio segment with silence at both ends
@@ -75,3 +111,17 @@ def test_compute_file_hash(test_audio_file: Path) -> None:
     assert len(hash1) == 8
     # Hash should be hexadecimal
     assert all(c in "0123456789abcdef" for c in hash1)
+
+
+def test_is_voice_active() -> None:
+    """Test voice activity detection function."""
+    # Test with silent audio (should return False)
+    silent_audio = PydubSegment.silent(duration=500)
+    assert not is_voice_active(silent_audio, threshold=-40)
+
+    # Create non-silent audio by modifying the samples
+    non_silent = PydubSegment.silent(duration=500)
+    non_silent = non_silent._spawn(b"\x40" * (len(non_silent.raw_data)))  # Non-zero samples
+
+    # This should be detected as voice
+    assert is_voice_active(non_silent, threshold=-40)

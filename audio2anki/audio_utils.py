@@ -4,6 +4,7 @@ import hashlib
 from math import ceil, floor
 from pathlib import Path
 
+import numpy as np
 from pydub import AudioSegment as PydubSegment  # type: ignore
 from pydub.silence import detect_nonsilent  # type: ignore
 from rich.progress import Progress, TaskID
@@ -52,6 +53,27 @@ def trim_silence(audio: PydubSegment, min_silence_len: int = 100, silence_thresh
     return trimmed
 
 
+def is_voice_active(audio_segment: PydubSegment, threshold: int = -40) -> bool:
+    """Check if an audio segment contains speech based on energy threshold.
+
+    Args:
+        audio_segment: Audio segment to check
+        threshold: Energy threshold in dB
+
+    Returns:
+        True if segment contains speech, False otherwise
+    """
+    # Convert audio to numpy array
+    samples = np.array(audio_segment.get_array_of_samples())
+
+    # Calculate RMS energy
+    if len(samples) > 0:
+        rms = 20 * np.log10(np.sqrt(np.mean(samples.astype(np.float32) ** 2)) + 1e-9)
+        return rms > threshold
+
+    return False
+
+
 def split_audio(
     input_file: Path,
     segments: list[AudioSegment],
@@ -59,6 +81,7 @@ def split_audio(
     task_id: TaskID,
     progress: Progress,
     silence_thresh: int = -40,
+    padding_ms: int = 200,
 ) -> list[AudioSegment]:
     """Split audio file into segments and trim silence from each segment.
 
@@ -70,6 +93,8 @@ def split_audio(
         progress: Progress bar instance
         silence_thresh: Silence threshold in dB. Higher (less negative) values mean more
             aggressive silence detection. Default is -40dB.
+        padding_ms: Amount of padding in milliseconds to add to each segment before
+            trimming silence. This helps prevent cutting off the beginning or end of speech.
 
     Returns:
         List of segments with updated paths to audio files
@@ -83,14 +108,19 @@ def split_audio(
     # Create output directory if it doesn't exist
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Audio file duration in milliseconds
+    audio_duration = len(audio)
+
     # Process each segment
     for segment in segments:
-        # Extract segment audio
-        start_ms = floor(segment.start * 1000)
-        end_ms = ceil(segment.end * 1000)
+        # Calculate padded segment boundaries
+        start_ms = max(0, floor(segment.start * 1000) - padding_ms)
+        end_ms = min(audio_duration, ceil(segment.end * 1000) + padding_ms)
+
+        # Extract segment audio with padding
         segment_audio = audio[start_ms:end_ms]
 
-        # Trim silence
+        # Trim silence, but only if we have meaningful audio
         segment_audio = trim_silence(segment_audio, silence_thresh=silence_thresh)
 
         # Export audio segment with hash in filename
