@@ -28,6 +28,7 @@ Homepage = "https://github.com/osteele/audio2anki"
 Documentation = "https://osteele.github.io/audio2anki/"
 Issues = "https://github.com/osteele/audio2anki/issues"
 Source = "https://github.com/osteele/audio2anki"
+Changelog = "https://github.com/osteele/audio2anki/blob/main/CHANGELOG.md"
 
 [build-system]
 requires = ["hatchling"]
