@@ -102,6 +102,7 @@ executionEnvironments = [
         "src",
     ], reportPrivateUsage = false, reportMissingImports = false, reportUnknownVariableType = false, reportUnknownParameterType = false },
 ]
+include = ["audio2anki", "tests"]
 
 [project.scripts]
 audio2anki = "audio2anki.main:main"
