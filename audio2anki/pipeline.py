@@ -23,6 +23,7 @@ from rich.progress import (
 
 from . import artifact_cache
 from .artifact_cache import try_hard_link
+from .models import PipelineResult
 from .transcoder import TRANSCODING_FORMAT, get_transcode_hash
 from .transcribe import get_transcription_hash
 from .translate import TranslationProvider, get_translation_hash
@@ -165,7 +166,7 @@ def pipeline_function(
     version: VersionType | None = None,
     hash: HashType | None = None,
     artifacts: list[dict[str, Any]] | None = None,
-) -> Callable[[Callable[..., None]], PipelineFunction]:
+) -> Callable[[Callable[..., Any]], PipelineFunction]:
     """
     Decorator that annotates a pipeline function with the artifacts it produces.
 
@@ -194,7 +195,7 @@ def pipeline_function(
         artifacts: List of artifact definitions or None for terminal functions
     """
 
-    def decorator(func: Callable[..., None]) -> PipelineFunction:
+    def decorator(func: Callable[..., Any]) -> PipelineFunction:
         produced_artifacts: dict[str, ArtifactSpec] = {}
 
         # Case 1: Using simplified form with extension/cache/version/hash
@@ -624,7 +625,7 @@ class PipelineRunner:
             for _name, input_path in input_paths.items():
                 context.update_stage_input(artifact_name, input_path)
 
-    def execute_stage(self, func: PipelineFunctionType) -> None:
+    def execute_stage(self, func: PipelineFunctionType, is_terminal: bool = False) -> Any:
         """Execute a single pipeline stage with caching."""
         # Create stage-specific context
         stage_context = self.context.for_stage(func)
@@ -649,17 +650,18 @@ class PipelineRunner:
                 # Fall back to temp cache if persistent cache misses
                 cache_hit, artifact_paths = self.get_cached_artifacts(func)
 
-        # Run the function if needed
-        if cache_hit:
+        # Only skip running the function if cache_hit and not terminal
+        if cache_hit and not is_terminal:
             # Log cache hit at debug level - use logging module directly to avoid scope issues
             logger.debug(f"Using cached result for {func.__name__}")
             if self.options.debug:
                 self.console.print(f"[green]Using cached result for {func.__name__}[/]")
             # Update artifacts with paths from cache
             self.update_artifacts(func, artifact_paths)
+            result = None
         else:
             logging.debug(f"Running {func.__name__} (use_cache={use_cache}, cache_hit={cache_hit})")
-            func(context=stage_context, **kwargs)
+            result = func(context=stage_context, **kwargs)
 
             # Store results in cache after running
             if use_cache:
@@ -674,6 +676,9 @@ class PipelineRunner:
                 self.update_artifacts(func, generated_paths)
 
         self.context.progress.complete_stage()
+        if is_terminal:
+            return result
+        return None
 
     def compute_output_cache_key(self, artifact_def: ArtifactSpec, inputs: dict[str, Path]) -> str:
         """
@@ -842,15 +847,14 @@ class PipelineRunner:
 
                 sys.exit(1)
 
-    def run(self) -> Path:
-        """Run the entire pipeline and return the final artifact path."""
-        # Validate pipeline before running
+    def run(self) -> PipelineResult:
+        """Run the entire pipeline and return the final artifact value from the terminal function."""
         validate_pipeline(self.pipeline, self.artifacts)
-
-        # Run each stage
-        for func in self.pipeline:
+        result: PipelineResult | None = None
+        for i, func in enumerate(self.pipeline):
+            is_terminal = i == len(self.pipeline) - 1
             try:
-                self.execute_stage(func)
+                result = self.execute_stage(func, is_terminal=is_terminal)
             except Exception as e:
                 # Classify error type
                 error_type = "SYSTEM_ERROR"
@@ -863,23 +867,15 @@ class PipelineRunner:
                 logging.error(f"{error_type} in {func.__name__}: {e!s}", exc_info=True)
                 self.console.print(f"[red]Error in {func.__name__} ({error_type}): {e!s}[/]")
                 raise
-
-        # Get the output folder for the final deck
-        output_folder = self.context.output_folder
-
-        if output_folder and output_folder.exists():
-            # Print success message with the output folder path
-            self.console.print(f"\nDeck created at: {output_folder}")
-            return output_folder
-        else:
-            raise ValueError("Pipeline completed but no deck artifact was produced")
+        assert result is not None
+        return result
 
 
-def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -> Path:
+def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -> PipelineResult:
     """Run the audio processing pipeline.
 
     Returns:
-        Path: The path to the generated deck directory
+        Tuple of (deck_dir, translate_path)
     """
     import atexit
     import sys as signal_sys  # Import sys with alias to avoid conflicts
@@ -1010,7 +1006,7 @@ def generate_deck(
     pronunciation: Path | None = None,
     voice_isolation: Path | None = None,
     transcode: Path | None = None,
-) -> None:
+) -> PipelineResult:
     """Generate Anki deck from translated segments."""
     from .anki import generate_anki_deck
 
@@ -1019,7 +1015,7 @@ def generate_deck(
     if not input_audio:
         raise ValueError("No input audio file available for deck generation")
 
-    generate_anki_deck(
+    return generate_anki_deck(
         segments_file=translate,
         input_audio_file=input_audio,
         transcription_file=transcribe,

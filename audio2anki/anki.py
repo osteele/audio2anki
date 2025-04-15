@@ -7,11 +7,12 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from rich.console import Console
 from rich.progress import Progress, TaskID
 
 from .audio_utils import split_audio
 from .config import load_config
-from .models import AudioSegment
+from .models import AudioSegment, PipelineResult
 from .pipeline import PipelineProgress
 
 # Template for the README.md file
@@ -91,6 +92,38 @@ def is_deck_folder(path: Path) -> bool:
     deck_txt = path / "deck.txt"
     media_dir = path / "media"
     return path.exists() and deck_csv.exists() and deck_txt.exists() and media_dir.exists()
+
+
+def display_deck_summary(segments: list[AudioSegment], console: Console | None = None) -> None:
+    """Display a summary of the created deck content.
+
+    Shows original sentences and their timestamps in a compact form.
+    If there are many segments, shows first 10, ellipsis, and last few.
+    """
+    if not console:
+        console = Console()
+
+    def format_time(seconds: float) -> str:
+        """Format seconds as MM:SS.mmm"""
+        minutes = int(seconds // 60)
+        seconds_part = seconds % 60
+        return f"{minutes:02d}:{seconds_part:05.2f}"
+
+    console.print("\n[bold]Deck contents:[/]")
+
+    segment_list = [(i, seg) for i, seg in enumerate(segments, start=1)]
+    if len(segments) >= 12:
+        segment_list = segment_list[:10] + [(None, None)] + segment_list[-2:]
+    max_index_width = len(str(segment_list[-1][0])) if segment_list else 0
+    for i, seg in segment_list:
+        if seg is None:
+            console.print("[dim]...[/]")
+        else:
+            console.print(
+                f"[dim]{i:>{max_index_width}d}. {format_time(seg.start)}-{format_time(seg.end)}[/] {seg.text}"
+            )
+
+    console.print(f"[dim]Total segments: {len(segments)}[/]")
 
 
 def create_anki_deck(
@@ -245,7 +278,7 @@ def generate_anki_deck(
     segments_file: str | Path,
     progress: PipelineProgress,
     **kwargs: Any,
-) -> Path:
+) -> PipelineResult:
     """Process deck generation stage in the pipeline.
 
     Args:
@@ -254,7 +287,7 @@ def generate_anki_deck(
         **kwargs: Additional arguments passed from the pipeline
 
     Returns:
-        Path to the generated deck directory
+        PipelineResult with deck_dir and segments
     """
     from .transcribe import load_transcript, load_transcript_json
 
@@ -276,57 +309,23 @@ def generate_anki_deck(
         # Convert string to Path
         deck_dir = Path(deck_dir)
 
-    # Determine if this is a deck folder that needs to be replaced
-    is_deck_folder = False
-    if deck_dir.exists():
-        deck_csv = deck_dir / "deck.csv"
-        deck_txt = deck_dir / "deck.txt"
-        media_dir = deck_dir / "media"
-        is_deck_folder = (deck_csv.exists() or deck_txt.exists()) and media_dir.exists()
-
-        # If it's a deck folder, clean up any existing files
-        if is_deck_folder:
-            import os
-            import shutil
-
-            for item in deck_dir.glob("*"):
-                if item.is_file() or item.is_symlink():
-                    os.unlink(item)
-                elif item.is_dir() and item.name != "anki_media":  # Keep the anki_media symlink
-                    shutil.rmtree(item)
-
-    # Create directory if it doesn't exist
-    deck_dir.mkdir(parents=True, exist_ok=True)
-
-    # Check if the file is a JSON file
-    is_json = segments_path.suffix.lower() == ".json"
-
     # Load segments - either from JSON or from legacy SRT files
+    is_json = segments_path.suffix.lower() == ".json"
     if is_json:
-        # For JSON files, use the JSON loader which has all data
         enriched_segments = load_transcript_json(segments_path)
     else:
-        # For backward compatibility, handle SRT files
         enriched_segments = load_transcript(segments_path)
-
         # Store translations before they get overwritten
         for seg in enriched_segments:
             seg.translation = seg.text
-
-        # Get transcription and pronunciation files from context
         transcription_file = kwargs.get("transcription_file")
         pronunciation_file = kwargs.get("pronunciation_file")
-
-        # Load transcription and pronunciation if available
         if transcription_file:
             transcription_segments = load_transcript(Path(transcription_file))
-            # Update text from transcription
             for t_seg, tr_seg in zip(transcription_segments, enriched_segments, strict=True):
                 tr_seg.text = t_seg.text
-
         if pronunciation_file:
             pronunciation_segments = load_transcript(Path(pronunciation_file))
-            # Update pronunciation
             for p_seg, tr_seg in zip(pronunciation_segments, enriched_segments, strict=True):
                 tr_seg.pronunciation = p_seg.text
 
@@ -351,4 +350,4 @@ def generate_anki_deck(
         target_language=kwargs.get("target_language"),
     )
 
-    return deck_dir
+    return PipelineResult(deck_dir=deck_dir, segments=enriched_segments)

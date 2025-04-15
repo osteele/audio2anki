@@ -7,6 +7,7 @@ All notable changes to audio2anki will be documented in this file.
 ### Added
 - Improved audio segment extraction with padding and silence detection
 - Added configuration options for silence threshold and audio padding
+- Added deck summary display showing timestamps and content after deck creation
 
 ## [0.1.2] - 2025-04-08
 

@@ -176,7 +176,7 @@ def test_generate_anki_deck(
     old_cwd = os.getcwd()
     os.chdir(tmp_path)
     try:
-        deck_dir = generate_anki_deck(
+        result = generate_anki_deck(
             translation_file,
             mock_pipeline_progress,
             transcription_file=transcript_file,
@@ -186,6 +186,7 @@ def test_generate_anki_deck(
             input_audio_file=audio_file,
         )
 
+        deck_dir = result.deck_dir
         # Check output
         assert deck_dir.exists()
         assert deck_dir.is_dir()
@@ -257,7 +258,7 @@ def test_generate_anki_deck_with_output_folder(
         custom_folder_path.mkdir(exist_ok=True)
 
         # Now test the full generation function
-        deck_dir = generate_anki_deck(
+        result = generate_anki_deck(
             translation_file,
             mock_pipeline_progress,
             transcription_file=transcript_file,
@@ -267,6 +268,7 @@ def test_generate_anki_deck_with_output_folder(
             output_folder=custom_folder,
         )
 
+        deck_dir = result.deck_dir
         # Check that the deck was created with the correct name structure
         # Different OS paths might be handled differently, focus on the directory name
         assert deck_dir.name == custom_folder
@@ -278,7 +280,7 @@ def test_generate_anki_deck_with_output_folder(
         # set the output path to what would be derived normally
         derived_path = f"decks/{audio_file.stem}"
 
-        derived_deck_dir = generate_anki_deck(
+        derived_result = generate_anki_deck(
             translation_file,
             mock_pipeline_progress,
             transcription_file=transcript_file,
@@ -288,6 +290,7 @@ def test_generate_anki_deck_with_output_folder(
             output_folder=derived_path,
         )
 
+        derived_deck_dir = derived_result.deck_dir
         # Check that the directory structure is correct
         assert "decks" in str(derived_deck_dir)
         assert "chinese_lesson" in str(derived_deck_dir)
@@ -304,7 +307,7 @@ def test_generate_anki_deck_with_output_folder(
         # This is the path that would be calculated by determine_output_path in main.py
         nested_path = f"existing_folder/{audio_file.stem}"
 
-        existing_folder_deck_dir = generate_anki_deck(
+        existing_result = generate_anki_deck(
             translation_file,
             mock_pipeline_progress,
             transcription_file=transcript_file,
@@ -314,6 +317,7 @@ def test_generate_anki_deck_with_output_folder(
             output_folder=nested_path,
         )
 
+        existing_folder_deck_dir = existing_result.deck_dir
         # Check that the directory structure is correct - we're using the nested path directly now
         assert "existing_folder" in str(existing_folder_deck_dir)
         assert audio_file.stem in str(existing_folder_deck_dir)
@@ -328,7 +332,7 @@ def test_generate_anki_deck_with_output_folder(
         (deck_folder / "deck.txt").write_text("old content")
         (deck_folder / "media").mkdir()
 
-        replaced_deck_dir = generate_anki_deck(
+        replaced_result = generate_anki_deck(
             translation_file,
             mock_pipeline_progress,
             transcription_file=transcript_file,
@@ -338,6 +342,7 @@ def test_generate_anki_deck_with_output_folder(
             output_folder="deck_folder",
         )
 
+        replaced_deck_dir = replaced_result.deck_dir
         # Check that we're using the existing deck folder
         assert deck_folder.name in str(replaced_deck_dir)
         assert replaced_deck_dir.exists()

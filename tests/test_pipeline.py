@@ -7,6 +7,7 @@ import pytest
 from rich.console import Console
 from rich.progress import Progress, TaskID
 
+from audio2anki.models import PipelineResult
 from audio2anki.pipeline import (
     PipelineContext,
     PipelineFunctionType,
@@ -344,7 +345,7 @@ def test_pipeline_stages(test_audio_file: Path, tmp_path: Path) -> None:
             mock_transcode_audio.return_value = None
             mock_transcribe_audio.return_value = []  # Empty list of segments
             mock_translate_segments.return_value = None
-            mock_generate_anki_deck.return_value = dummy_result_path
+            mock_generate_anki_deck.return_value = PipelineResult(deck_dir=dummy_result_path, segments=[])
 
             # Run the pipeline
             run_pipeline(test_audio_file, console, options)

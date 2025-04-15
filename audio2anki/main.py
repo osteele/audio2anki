@@ -11,6 +11,7 @@ from rich.markdown import Markdown
 from rich.table import Table
 from rich.text import Text
 
+from .anki import display_deck_summary
 from .config import edit_config, load_config, reset_config, set_config_value
 from .pipeline import PipelineOptions, run_pipeline
 from .types import LanguageCode
@@ -228,12 +229,16 @@ def process(
         use_artifact_cache=not no_cache,
         skip_cache_cleanup=skip_cache_cleanup,
     )
-    deck_dir = str(run_pipeline(Path(input_file), console, options))
+    result = run_pipeline(Path(input_file), console, options)
+    deck_dir = str(result.deck_dir)
+
+    # Display deck summary
+    display_deck_summary(result.segments, console)
 
     # Print deck location and instructions
     console.print(f"\n[green]Deck created at:[/] {deck_dir}")
 
-    # Direct user to the README.md file instead of printing it
+    # Direct user to the README.md file
     readme_path = Path(deck_dir) / "README.md"
     if readme_path.exists():
         console.print(f"[green]See[/] {readme_path} [green]for instructions on how to import the deck into Anki.[/]")
