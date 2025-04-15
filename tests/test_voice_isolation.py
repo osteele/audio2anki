@@ -14,7 +14,12 @@ import pytest
 import soundfile as sf
 from rich.progress import Progress, TaskID
 
-from audio2anki.pipeline import PipelineContext, PipelineProgress, pipeline_function
+from audio2anki.pipeline import (
+    PipelineContext,
+    PipelineProgress,
+    create_artifact_spec,
+    pipeline_function,
+)
 from audio2anki.types import LanguageCode
 
 
@@ -150,7 +155,7 @@ def test_isolate_voice_basic(
 
     # Set up the artifacts dictionary
     # pyright: ignore[reportPrivateUsage]
-    mock_pipeline_context._artifacts = {"mock_isolate_voice": {"extension": "mp3"}}
+    mock_pipeline_context._artifacts = {"mock_isolate_voice": create_artifact_spec(extension="mp3")}
 
     # Create output path in the temporary directory
     output_path = real_test_audio_file.parent / "output.mp3"
@@ -215,7 +220,7 @@ def test_isolate_voice_api_timeout(
     mock_pipeline_context.update_stage_input("isolated_voice", real_test_audio_file)
 
     # Set up the artifacts dictionary
-    mock_pipeline_context._artifacts = {"isolated_voice": {"extension": "mp3"}}
+    mock_pipeline_context._artifacts = {"isolated_voice": create_artifact_spec(extension="mp3")}
 
     # Create output path in the temporary directory
     output_path = real_test_audio_file.parent / "output_timeout.mp3"
@@ -250,7 +255,7 @@ def test_isolate_voice_request_error(
     mock_pipeline_context.update_stage_input("isolated_voice", real_test_audio_file)
 
     # Set up the artifacts dictionary
-    mock_pipeline_context._artifacts = {"isolated_voice": {"extension": "mp3"}}
+    mock_pipeline_context._artifacts = {"isolated_voice": create_artifact_spec(extension="mp3")}
 
     # Create output path in the temporary directory
     output_path = real_test_audio_file.parent / "output_request_error.mp3"
@@ -285,7 +290,7 @@ def test_isolate_voice_empty_response(
     mock_pipeline_context.update_stage_input("isolated_voice", real_test_audio_file)
 
     # Set up the artifacts dictionary
-    mock_pipeline_context._artifacts = {"isolated_voice": {"extension": "mp3"}}
+    mock_pipeline_context._artifacts = {"isolated_voice": create_artifact_spec(extension="mp3")}
 
     # Create output path in the temporary directory
     output_path = real_test_audio_file.parent / "output_empty.mp3"
@@ -323,7 +328,7 @@ def test_isolate_voice_no_api_key(
     mock_pipeline_context.update_stage_input("isolated_voice", real_test_audio_file)
 
     # Set up the artifacts dictionary
-    mock_pipeline_context._artifacts = {"isolated_voice": {"extension": "mp3"}}
+    mock_pipeline_context._artifacts = {"isolated_voice": create_artifact_spec(extension="mp3")}
 
     # Create output path in the temporary directory
     output_path = real_test_audio_file.parent / "output_no_key.mp3"

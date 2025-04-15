@@ -110,20 +110,47 @@ The pipeline implements a two-level caching system:
      ```python
      # Simple usage with default artifact name (function name)
      @pipeline_function(extension="mp3", hash=get_version_function)
-
      # Using version instead of hash
      @pipeline_function(extension="mp3", version=1)
      @pipeline_function(extension="mp3", version="1.0")
-
      # For terminal functions that don't produce artifacts
      @pipeline_function(artifacts=[])
-
      # With multiple artifacts
      @pipeline_function(artifacts=[
          {"name": "artifact1", "extension": "mp3", "cache": True, "version": 1},
          {"name": "artifact2", "extension": "json", "hash": get_hash_function}
      ])
      ```
+
+#### Persistent Cache Key Construction
+
+- **Requirements:**
+  - Cache keys must be stable and robust across different runs and environments
+  - Only truly interchangeable artifacts should share cache keys
+  - Cache keys should invalidate when any factor that affects the output changes
+  - Cache invalidation should happen without executing pipeline functions
+  - Cache key construction should be transparent to pipeline function implementations
+
+- **Key Components:**
+  1. **Content of Input Artifacts:** Hashed content of all input files, ensuring cache invalidation when input data changes
+  2. **Pipeline Stage Identity:** The name of the artifact/pipeline stage is included, ensuring different stages don't share cache entries
+  3. **Processing Parameters:** Version numbers or hash functions capture algorithm changes and configuration parameters
+
+- **Implementation:**
+  - The cache key is constructed from:
+    - MD5 hash of all input file contents (capturing exact input data)
+    - The artifact/stage name (e.g., "transcribe", "translate")
+    - Either a version number or a function-provided hash value that captures processing parameters
+  - Pipeline functions can specify additional invalidation criteria via:
+    - Simple version numbers: `@pipeline_function(extension="mp3", version=1)`
+    - Hash functions: `@pipeline_function(extension="mp3", hash=get_translation_hash)`
+  - Hash functions can incorporate contextual information such as language settings, provider selection, or algorithm configurations
+
+- **Benefits:**
+  - Keeps cache management and checksum checking logic out of pipeline functions
+  - Allows for efficient up-front determination of required pipeline work
+  - Ensures correctness by invalidating cache when any relevant factor changes
+  - Maintains cache hits across runs even when temporary directories change
 
 ### Pipeline Stages
 

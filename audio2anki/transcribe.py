@@ -191,7 +191,9 @@ def get_transcription_hash(source_language: LanguageCode | None = None) -> str:
         # Add API version or other critical parameters here
     }
 
-    return create_params_hash(params)
+    hash_value = create_params_hash(params)
+    logger.debug(f"get_transcription_hash params={params} -> {hash_value}")
+    return hash_value
 
 
 def transcribe_audio(

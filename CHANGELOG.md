@@ -9,6 +9,9 @@ All notable changes to audio2anki will be documented in this file.
 - Added configuration options for silence threshold and audio padding
 - Added deck summary display showing timestamps and content after deck creation
 
+### Fixed
+- Persistent cache keys now use artifact basenames (which include content hashes) instead of full temp file paths, ensuring cache hits across runs regardless of temp directory changes.
+
 ## [0.1.2] - 2025-04-08
 
 ### Changed

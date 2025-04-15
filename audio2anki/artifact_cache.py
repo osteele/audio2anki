@@ -240,6 +240,15 @@ class ArtifactCache:
         input_hash = self._compute_input_hash(inputs)
         artifact_id = f"{artifact_name}_{key}_{input_hash}"
 
+        try:
+            inputs_json = json.dumps({k: str(v) for k, v in inputs.items()}, sort_keys=True)
+        except Exception:
+            inputs_json = str(inputs)
+        logger.debug(
+            f"[LOOKUP] artifact_id={artifact_id}, inputs={inputs_json}, input_hash={input_hash}, "
+            f"key={key}, artifact_name={artifact_name}"
+        )
+
         logger.debug(f"Looking for artifact_id: {artifact_id}")
 
         with sqlite3.connect(self.db_path) as conn:
@@ -273,6 +282,7 @@ class ArtifactCache:
 
         file_path = self.artifacts_dir / f"{artifact_id}{extension}"
         logger.debug(f"Returning new artifact path: {file_path} (cache MISS)")
+        logger.debug(f"[LOOKUP-RESULT] artifact_id={artifact_id}, cache_hit=False, file_path={file_path}")
         return file_path, False
 
     def store_artifact(
@@ -295,6 +305,15 @@ class ArtifactCache:
 
         input_hash = self._compute_input_hash(inputs)
         artifact_id = f"{artifact_name}_{key}_{input_hash}"
+
+        try:
+            inputs_json = json.dumps({k: str(v) for k, v in inputs.items()}, sort_keys=True)
+        except Exception:
+            inputs_json = str(inputs)
+        logger.debug(
+            f"[STORE] artifact_id={artifact_id}, inputs={inputs_json}, input_hash={input_hash}, key={key}, "
+            f"artifact_name={artifact_name}"
+        )
 
         logger.debug(f"Generated artifact_id: {artifact_id}")
 
@@ -358,7 +377,7 @@ class ArtifactCache:
             logger.debug(f"Successfully stored artifact at {dest_path} ({dest_path.stat().st_size} bytes)")
         else:
             logger.error(f"Failed to confirm artifact exists at {dest_path}")
-
+        logger.debug(f"[STORE-RESULT] artifact_id={artifact_id}, file_path={dest_path}")
         return dest_path
 
     def clear_cache(self) -> tuple[int, int]:

@@ -5,15 +5,28 @@ import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict, cast
 
 import tomli_w
 import tomllib
 
 logger = logging.getLogger(__name__)
 
+
+class ConfigDict(TypedDict):
+    clean_files: bool
+    use_cache: bool
+    cache_expiry_days: int
+    voice_isolation_provider: str
+    transcription_provider: str
+    use_artifact_cache: bool
+    max_artifact_cache_size_mb: int
+    audio_padding_ms: int
+    silence_thresh: int
+
+
 # Default configuration values
-DEFAULT_CONFIG: dict[str, Any] = {
+DEFAULT_CONFIG: ConfigDict = {
     "clean_files": True,
     "use_cache": True,
     "cache_expiry_days": 14,
@@ -44,7 +57,7 @@ class Config:
     silence_thresh: int
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Config":
+    def from_dict(cls, data: ConfigDict) -> "Config":
         """Create a Config instance from a dictionary."""
         return cls(
             clean_files=data["clean_files"],
@@ -58,19 +71,19 @@ class Config:
             silence_thresh=data.get("silence_thresh", -40),
         )
 
-    def to_dict(self) -> dict[str, bool | int | str]:
+    def to_dict(self) -> ConfigDict:
         """Convert Config to a dictionary."""
-        return {
-            "clean_files": self.clean_files,
-            "use_cache": self.use_cache,
-            "cache_expiry_days": self.cache_expiry_days,
-            "voice_isolation_provider": self.voice_isolation_provider,
-            "transcription_provider": self.transcription_provider,
-            "use_artifact_cache": self.use_artifact_cache,
-            "max_artifact_cache_size_mb": self.max_artifact_cache_size_mb,
-            "audio_padding_ms": self.audio_padding_ms,
-            "silence_thresh": self.silence_thresh,
-        }
+        return ConfigDict(
+            clean_files=self.clean_files,
+            use_cache=self.use_cache,
+            cache_expiry_days=self.cache_expiry_days,
+            voice_isolation_provider=self.voice_isolation_provider,
+            transcription_provider=self.transcription_provider,
+            use_artifact_cache=self.use_artifact_cache,
+            max_artifact_cache_size_mb=self.max_artifact_cache_size_mb,
+            audio_padding_ms=self.audio_padding_ms,
+            silence_thresh=self.silence_thresh,
+        )
 
 
 def get_config_path() -> Path:
@@ -177,6 +190,17 @@ def validate_config(config: Config) -> list[str]:
     return errors
 
 
+def get_config_type(key: str) -> type[bool] | type[int] | type[str]:
+    value: Any = cast(Any, DEFAULT_CONFIG[key])
+    if isinstance(value, bool):
+        return bool
+    if isinstance(value, int):
+        return int
+    if isinstance(value, str):
+        return str
+    raise TypeError("Unexpected config value type")
+
+
 def set_config_value(key: str, value: str) -> tuple[bool, str]:
     """Set a configuration value.
 
@@ -193,7 +217,7 @@ def set_config_value(key: str, value: str) -> tuple[bool, str]:
     if key not in DEFAULT_CONFIG:
         return False, f"Unknown configuration key: {key}"
 
-    default_type: Any = type(DEFAULT_CONFIG[key])
+    default_type = get_config_type(key)
     converted_value: Any = None
     try:
         if default_type is bool:

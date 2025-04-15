@@ -244,7 +244,7 @@ class PipelineProgress:
     pipeline_task: TaskID
     console: Console
     current_stage: str | None = None
-    stage_tasks: dict[str, TaskID] = field(default_factory=dict)
+    stage_tasks: dict[str, TaskID] = field(default_factory=dict[str, TaskID])
 
     @classmethod
     def create(cls, console: Console) -> "PipelineProgress":
@@ -318,8 +318,10 @@ class PipelineContext:
     translation_provider: TranslationProvider = TranslationProvider.OPENAI
     _current_fn: PipelineFunction | None = None
     _input_file: Path | None = None
-    _stage_inputs: dict[str, Path] = field(default_factory=dict)
-    _artifacts: dict[str, dict[str, Any]] = field(default_factory=dict)
+    _stage_inputs: dict[str, Path] = field(default_factory=dict[str, Path])
+    _artifacts: dict[str, ArtifactSpec] = field(
+        default_factory=lambda: {"default": create_artifact_spec(extension="mp3", cache=False)}
+    )
 
     def set_input_file(self, input_file: Path) -> None:
         """Set the input file."""
@@ -336,7 +338,7 @@ class PipelineContext:
         produced_artifacts = getattr(pipeline_fn, "produced_artifacts", None)
         if produced_artifacts is None:
             # Function produces single artifact named after the function
-            produced_artifacts = {pipeline_fn.__name__: {"extension": "mp3"}}
+            produced_artifacts = {pipeline_fn.__name__: create_artifact_spec(extension="mp3")}
 
         # Update artifacts dictionary
         self._artifacts.update(produced_artifacts)
@@ -364,7 +366,7 @@ class PipelineContext:
         # Get artifact definitions for current function
         produced_artifacts = getattr(self._current_fn, "produced_artifacts", None)
         if produced_artifacts is None:
-            produced_artifacts = {self._current_fn.__name__: {"extension": "mp3"}}
+            produced_artifacts = {self._current_fn.__name__: create_artifact_spec(extension="mp3")}
 
         # If no artifact_name provided, use the only artifact if there's just one
         if not artifact_name:
@@ -471,17 +473,13 @@ def validate_pipeline(pipeline: Sequence[PipelineFunctionType], initial_artifact
         # Check if all required artifacts are available
         missing = required_artifacts - available_artifacts
         if missing:
-            logging.error(
-                f"Function {func.__name__} requires artifacts that won't be available: {missing}. "
-                f"Available artifacts will be: {available_artifacts}"
-            )
             raise ValueError(
                 f"Function {func.__name__} requires artifacts that won't be available: {missing}. "
                 f"Available artifacts will be: {available_artifacts}"
             )
 
-        # Add this function's produced artifacts to available artifacts
-        produced_artifacts = getattr(func, "produced_artifacts", {func.__name__: {"extension": "mp3"}})
+        # Add this function's produced artifacts to available_artifacts
+        produced_artifacts = getattr(func, "produced_artifacts", {func.__name__: create_artifact_spec(extension="mp3")})
         for artifact_name, _artifact_type in produced_artifacts.items():
             available_artifacts.add(artifact_name)
 
@@ -686,83 +684,55 @@ class PipelineRunner:
 
         Args:
             artifact_def: The artifact definition
-            inputs: The input files for the artifact
+            inputs: The input files for the artifact (full paths)
 
         Returns:
-            An integer hash suitable for cache keys
+            Cache key string
         """
-
-        # Start with file hash if we have input files
         content_hash = hashlib.md5()
-        for _, v in sorted(inputs.items()):  # Sort kwargs for consistent hashing
+        for name, v in sorted(inputs.items()):
             with open(v, "rb") as f:
-                content_hash.update(f.read())
-
-        # Add version if specified
+                data = f.read()
+                md5 = hashlib.md5(data).hexdigest()
+                logger.debug(f"Input file for {name}: {v} md5={md5}")
+                content_hash.update(data)
         version = artifact_def.get("version")
         if version is not None:
             content_hash.update(str(version).encode())
-
-        # Add resolved hash if specified
         hash_value = artifact_def.get("hash")
         if hash_value is not None:
             resolved_hash = resolve_hash(hash_value, self.context)
             content_hash.update(str(resolved_hash).encode())
-
-        # Convert to integer for cache compatibility
         return content_hash.hexdigest()
 
     def check_persistent_cache(self, func: PipelineFunction, kwargs: dict[str, Any]) -> tuple[bool, dict[str, Path]]:
         """
         Check for cached artifacts in the persistent cache.
-
         Args:
             func: The pipeline function
-            kwargs: The function arguments
-
+            kwargs: The function arguments (full paths)
         Returns:
             Tuple of (cache hit, artifact paths dict)
         """
-
         func_name = func.__name__
         logger.debug(f"Checking persistent cache for function: {func_name}")
         logger.debug(f"Function kwargs: {list(kwargs.keys())}")
-
-        # Resolve any path arguments to absolute paths for consistent caching
-        normalized_kwargs = {}
-        for k, v in kwargs.items():
-            if isinstance(v, Path):
-                try:
-                    normalized_kwargs[k] = v.resolve()
-                    if str(v) != str(normalized_kwargs[k]):  # type: ignore
-                        logger.debug(f"Normalized path {k}: {v} -> {normalized_kwargs[k]}")
-                except Exception:
-                    normalized_kwargs[k] = v
-            else:
-                normalized_kwargs[k] = v
-
-        # Use normalized kwargs from this point on
-        kwargs = normalized_kwargs
-
         artifact_paths: dict[str, Path] = {}
         all_found = True
-
-        # Check if all artifacts for this function are in the cache
         for artifact_name, artifact_def in func.produced_artifacts.items():
             if not artifact_def.get("cache", False):
                 logger.debug(f"Artifact '{artifact_name}' has caching disabled")
                 continue
-
+            # Compute cache key
             cache_key = self.compute_output_cache_key(artifact_def, kwargs)
+            # Construct input basenames dict for persistent cache
+            input_basenames = {k: v.name for k, v in kwargs.items() if isinstance(v, Path)}
             extension = artifact_def.get("extension", "mp3")
-
             logger.debug(f"Looking for cached artifact '{artifact_name}' with hash {cache_key}")
-
-            cached_path, cache_hit = artifact_cache.get_cached_artifact(artifact_name, cache_key, kwargs, extension)
-
+            cached_path, cache_hit = artifact_cache.get_cached_artifact(
+                artifact_name, cache_key, input_basenames, extension
+            )
             if cache_hit and cached_path:
-                logger.debug(f"✅ Cache HIT for '{artifact_name}' at {cached_path}")
-                # Copy the artifact from the persistent cache to the temporary cache using hard links when possible
                 temp_path = self.copy_to_temp_cache(cached_path, artifact_name, extension)
                 artifact_paths[artifact_name] = temp_path
                 logger.debug(f"Copied artifact from persistent cache to temporary cache at {temp_path}")
@@ -770,11 +740,8 @@ class PipelineRunner:
                 logger.debug(f"❌ Cache MISS for '{artifact_name}'")
                 all_found = False
                 break
-
         result = all_found and bool(artifact_paths)
         logger.debug(f"Overall cache {'✅ HIT' if result else '❌ MISS'} for {func_name}")
-
-        # Only return success if all artifacts were found
         return result, artifact_paths
 
     def store_in_persistent_cache(
@@ -782,47 +749,28 @@ class PipelineRunner:
     ) -> None:
         """
         Store all artifacts produced by this function in the persistent cache.
-
         Args:
             func: The pipeline function
             context: The pipeline context
-            kwargs: The function arguments used
+            kwargs: The function arguments used (full paths)
         """
-
         func_name = func.__name__
         logger.debug(f"Storing artifacts in persistent cache for function: {func_name}")
-
-        # Normalize any path arguments for consistent caching
-        normalized_kwargs = {}
-        for k, v in kwargs.items():
-            if isinstance(v, Path):
-                try:
-                    normalized_kwargs[k] = v.resolve()
-                except Exception:
-                    normalized_kwargs[k] = v
-            else:
-                normalized_kwargs[k] = v
-
-        # Use normalized kwargs from this point on
-        kwargs = normalized_kwargs
-
-        for artifact_name, artifact_def in sorted(
-            func.produced_artifacts.items()
-        ):  # Sort artifacts for consistent order
+        for artifact_name, artifact_def in sorted(func.produced_artifacts.items()):
             if not artifact_def.get("cache", False):
                 logger.debug(f"Skipping cache storage for '{artifact_name}' (caching disabled)")
                 continue
-
+            # Compute cache key
             cache_key = self.compute_output_cache_key(artifact_def, kwargs)
+            # Construct input basenames dict for persistent cache
+            input_basenames = {k: v.name for k, v in kwargs.items() if isinstance(v, Path)}
             extension = artifact_def.get("extension", "mp3")
-
             artifact_path = context.get_artifact_path(artifact_name)
             logger.debug(f"Checking if artifact exists at {artifact_path}")
-
             if artifact_path.exists():
                 try:
                     stored_path = artifact_cache.store_artifact(
-                        artifact_name, cache_key, kwargs, artifact_path, extension
+                        artifact_name, cache_key, input_basenames, artifact_path, extension
                     )
                     logger.debug(f"✅ Stored '{artifact_name}' in persistent cache (hash {cache_key}) at {stored_path}")
                 except Exception as e:
@@ -880,8 +828,13 @@ def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -
     import atexit
     import sys as signal_sys  # Import sys with alias to avoid conflicts
 
-    from . import cache
+    from . import artifact_cache, cache
     from .utils import format_bytes
+
+    # --- Ensure persistent artifact cache is initialized at the start ---
+    # This will create the persistent cache dir and DB if not present
+    artifact_cache.get_artifact_cache()
+    # --- End persistent cache initialization ---
 
     # Clean up old artifacts in the persistent cache if enabled
     if options.use_artifact_cache and not options.skip_cache_cleanup:
@@ -893,7 +846,7 @@ def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -
         except Exception as e:
             logger.warning(f"Error cleaning up old cache artifacts: {e}")
 
-    # Initialize a new temporary cache for this run
+    # Initialize a new temporary cache for this run (for intermediate files only)
     cache.init_cache(keep_files=options.debug)
     cache_dir = cache.get_cache().temp_dir
     logger.info(f"Initialized temporary cache at {cache_dir}")
