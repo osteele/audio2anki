@@ -801,20 +801,7 @@ class PipelineRunner:
         result: PipelineResult | None = None
         for i, func in enumerate(self.pipeline):
             is_terminal = i == len(self.pipeline) - 1
-            try:
-                result = self.execute_stage(func, is_terminal=is_terminal)
-            except Exception as e:
-                # Classify error type
-                error_type = "SYSTEM_ERROR"
-                if isinstance(e, ConnectionError | TimeoutError):
-                    error_type = "SERVICE_ERROR"
-                elif isinstance(e, ValueError):
-                    error_type = "VALIDATION_ERROR"
-
-                # Enhanced logging with context
-                logging.error(f"{error_type} in {func.__name__}: {e!s}", exc_info=True)
-                self.console.print(f"[red]Error in {func.__name__} ({error_type}): {e!s}[/]")
-                raise
+            result = self.execute_stage(func, is_terminal=is_terminal)
         assert result is not None
         return result
 

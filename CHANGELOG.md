@@ -8,6 +8,7 @@ All notable changes to audio2anki will be documented in this file.
 - Improved audio segment extraction with padding and silence detection
 - Added configuration options for silence threshold and audio padding
 - Added deck summary display showing timestamps and content after deck creation
+- API errors during voice isolation now display as user-facing errors
 
 ### Fixed
 - Persistent cache keys now use artifact basenames (which include content hashes) instead of full temp file paths, ensuring cache hits across runs regardless of temp directory changes.

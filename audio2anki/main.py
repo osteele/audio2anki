@@ -408,6 +408,8 @@ def main():
     import sys
     from pathlib import Path
 
+    from .exceptions import Audio2AnkiError
+
     # If first argument is a file, treat it as the process command
     if len(sys.argv) > 1 and not sys.argv[1].startswith("-"):
         # Check if it's a file and not a command
@@ -416,7 +418,11 @@ def main():
             # Insert 'process' command before the file argument
             sys.argv.insert(1, "process")
 
-    cli()  # pylint: disable=no-value-for-parameter
+    try:
+        cli()  # pylint: disable=no-value-for-parameter
+    except Audio2AnkiError as e:
+        console.print(f"[red]{e}[/]")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

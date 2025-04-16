@@ -26,7 +26,7 @@ from audio2anki.types import LanguageCode
 class MockResponse:
     """Mock HTTP response for testing."""
 
-    def __init__(self, status_code: int = 200, audio_data: bytes | None = None):
+    def __init__(self, status_code: int = 200, audio_data: bytes | None = None, text: str = "API error message"):
         self.status_code = status_code
         # Create a short audio file for testing if no custom audio data is provided
         self._audio_data = audio_data if audio_data is not None else self._create_test_audio()
@@ -34,6 +34,7 @@ class MockResponse:
         self.request = MagicMock()
         self.headers = {}
         self.content = self._audio_data
+        self.text = text
 
     def _create_test_audio(self) -> bytes:
         """Create a short test audio file in memory."""

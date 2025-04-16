@@ -1,5 +1,6 @@
 """Voice isolation using Eleven Labs API."""
 
+import contextlib
 import logging
 import os
 import tempfile
@@ -10,6 +11,8 @@ import httpx
 import librosa
 import soundfile as sf
 
+from .exceptions import Audio2AnkiError
+
 logger = logging.getLogger(__name__)
 
 VOICE_ISOLATION_FORMAT = "mp3"
@@ -17,17 +20,51 @@ VOICE_ISOLATION_FORMAT = "mp3"
 API_BASE_URL = "https://api.elevenlabs.io/v1"
 
 
-class VoiceIsolationError(Exception):
-    """Error during voice isolation."""
+class VoiceIsolationError(Audio2AnkiError):
+    """Error during voice isolation, with optional diagnostic context."""
 
-    def __init__(self, message: str, cause: Exception | None = None):
+    def __init__(
+        self,
+        message: str,
+        *,
+        input_file: str | None = None,
+        transcoded_file: str | None = None,
+        transcoded_file_size: int | None = None,
+        api_url: str | None = None,
+        http_status: int | None = None,
+        api_response: str | None = None,
+        cause: Exception | None = None,
+    ):
         super().__init__(message)
         self.cause = cause
-        self.error_message = message  # Store message in an attribute that won't conflict with Exception
+        self.error_message = message
+        self.input_file = input_file
+        self.transcoded_file = transcoded_file
+        self.transcoded_file_size = transcoded_file_size
+        self.api_url = api_url
+        self.http_status = http_status
+        self.api_response = api_response
 
     def __str__(self) -> str:
-        cause_str = f": {self.cause}" if self.cause else ""
-        return f"Voice Isolation Error{cause_str}: {self.error_message}"
+        lines = [f"Voice Isolation Error: {self.error_message}"]
+        if self.input_file:
+            lines.append(f"  File processed: {self.input_file}")
+        if self.transcoded_file:
+            size_str = f" (size: {self.transcoded_file_size} bytes)" if self.transcoded_file_size is not None else ""
+            lines.append(f"  Transcoded file: {self.transcoded_file}{size_str}")
+        if self.api_url:
+            lines.append(f"  API endpoint: {self.api_url}")
+        if self.http_status is not None:
+            lines.append(f"  HTTP status: {self.http_status}")
+        if self.api_response:
+            lines.append(f"  API response: {self.api_response}")
+        if self.cause:
+            lines.append(f"  Cause: {self.cause}")
+        lines.append("\nSuggestions:")
+        lines.append("- Check that the input file contains valid audio.")
+        lines.append("- Ensure the file is not empty after transcoding.")
+        lines.append("- If the problem persists, check API status or try again later.")
+        return "\n".join(lines)
 
 
 def get_voice_isolation_version() -> int:
@@ -59,31 +96,31 @@ def _call_elevenlabs_api(input_path: Path, progress_callback: Callable[[float], 
             "ELEVENLABS_API_KEY environment variable not set. Get your API key from https://elevenlabs.io"
         )
 
+    temp_path = None
+    api_url = f"{API_BASE_URL}/audio-isolation/stream"
+    transcoded_file_size = None
     try:
-        url = f"{API_BASE_URL}/audio-isolation/stream"
-        headers = {"xi-api-key": api_key, "accept": "application/json"}
-
-        logger.debug("Uploading audio file to Eleven Labs API")
-        update_progress(10)
-
+        transcoded_file_size = input_path.stat().st_size if input_path.exists() else None
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_file:
             temp_path = Path(temp_file.name)
 
             with open(input_path, "rb") as f:
                 files = {"audio": (input_path.name, f, "audio/mpeg")}
                 with httpx.Client(timeout=60.0) as client:
-                    with client.stream("POST", url, headers=headers, files=files) as response:
+                    with client.stream(
+                        "POST", api_url, headers={"xi-api-key": api_key, "accept": "application/json"}, files=files
+                    ) as response:
                         if response.status_code != 200:
-                            try:
-                                error_data = response.json()
-                                error_msg = error_data.get("detail", "API error message")
-                            except Exception:
-                                error_msg = f"API request failed: {response.status_code}"
-                            raise VoiceIsolationError(error_msg) from None
-
-                        logger.debug("Streaming isolated audio from API")
-                        update_progress(30)
-
+                            api_response = getattr(response, "text", None)
+                            raise VoiceIsolationError(
+                                "API request failed",
+                                input_file=str(input_path),
+                                transcoded_file=str(input_path),
+                                transcoded_file_size=transcoded_file_size,
+                                api_url=api_url,
+                                http_status=response.status_code,
+                                api_response=api_response,
+                            )
                         total_chunks = 0
                         for chunk in response.iter_bytes():
                             if not chunk:
@@ -92,20 +129,41 @@ def _call_elevenlabs_api(input_path: Path, progress_callback: Callable[[float], 
                             total_chunks += 1
                             if total_chunks % 10 == 0:
                                 update_progress(30 + (total_chunks % 20))
-
                         temp_file.flush()
                         os.fsync(temp_file.fileno())
-
-            if total_chunks == 0:
-                raise VoiceIsolationError("No audio data received from API") from None
-
-            update_progress(70)
-            return Path(temp_path)
-
+        if total_chunks == 0:
+            api_response = None
+            with contextlib.suppress(Exception):
+                api_response = getattr(response, "text", None)
+            raise VoiceIsolationError(
+                "No audio data received from API",
+                input_file=str(input_path),
+                transcoded_file=str(input_path),
+                transcoded_file_size=transcoded_file_size,
+                api_url=api_url,
+                http_status=response.status_code if "response" in locals() else None,
+                api_response=api_response,
+            )
+        update_progress(70)
+        return Path(temp_path)
     except httpx.TimeoutException as err:
-        raise VoiceIsolationError("API request timed out", cause=err) from err
+        raise VoiceIsolationError(
+            "API request timed out",
+            input_file=str(input_path),
+            transcoded_file=str(input_path),
+            transcoded_file_size=transcoded_file_size,
+            api_url=api_url,
+            cause=err,
+        ) from err
     except httpx.RequestError as err:
-        raise VoiceIsolationError(f"API request failed: {err}", cause=err) from err
+        raise VoiceIsolationError(
+            f"API request failed: {err}",
+            input_file=str(input_path),
+            transcoded_file=str(input_path),
+            transcoded_file_size=transcoded_file_size,
+            api_url=api_url,
+            cause=err,
+        ) from err
 
 
 def _isolate_vocals(input_path: str, output_dir: str, progress_callback: Callable[[float], None] | None = None) -> None:
