@@ -301,7 +301,7 @@ def test_pipeline_stages(test_audio_file: Path, tmp_path: Path) -> None:
     options = PipelineOptions(
         source_language=LanguageCode("zh"),
         target_language=LanguageCode("en"),
-        skip_voice_isolation=True,  # Skip voice isolation to simplify the pipeline
+        voice_isolation=False,  # Skip voice isolation to simplify the pipeline
         output_folder=dummy_result_path,  # Set the output folder to our dummy path
     )
 

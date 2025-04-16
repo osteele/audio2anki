@@ -180,7 +180,14 @@ def cli():
 @click.option("--target-language", help="Target language for translation")
 @click.option("--source-language", default="chinese", help="Source language for transcription")
 @click.option("--output-folder", help="Specify the output folder for the deck")
-@click.option("--skip-voice-isolation", is_flag=True, help="Skip the voice isolation step")
+@click.option(
+    "--voice-isolation",
+    is_flag=True,
+    help=(
+        "Isolate voice from background noise using ElevenLabs API before transcription. "
+        "Uses ~1000 ElevenLabs credits per minute of audio (free plan: 10,000 credits/month)."
+    ),
+)
 @click.option(
     "--translation-provider",
     type=click.Choice(["openai", "deepl"], case_sensitive=False),
@@ -195,7 +202,7 @@ def process(
     target_language: str | None = None,
     source_language: str = "chinese",
     output_folder: str | None = None,
-    skip_voice_isolation: bool = False,
+    voice_isolation: bool = False,
     translation_provider: str = "openai",
     no_cache: bool = False,
     skip_cache_cleanup: bool = False,
@@ -224,7 +231,7 @@ def process(
         target_language=optional_language_name_to_code(target_language),
         debug=debug,
         output_folder=resolved_output_path,
-        skip_voice_isolation=skip_voice_isolation,
+        voice_isolation=voice_isolation,
         translation_provider=translation_provider_enum,
         use_artifact_cache=not no_cache,
         skip_cache_cleanup=skip_cache_cleanup,

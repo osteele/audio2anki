@@ -103,12 +103,17 @@ The final output directory will contain:
 - Script
 - Directory of audio snippets (mp3)
 
+## Voice Isolation (Optional)
+
+If the `--voice-isolation` flag is specified, the pipeline will run a voice isolation stage using the ElevenLabs API before transcription. This uses approximately 1000 ElevenLabs credits per minute of audio (free plan: 10,000 credits/month). If not specified, transcription is performed on the transcoded audio without voice isolation.
+
 ## Dependencies
 
 - OpenAI Whisper for transcription
 - OpenAI GPT-4 for translation
 - pydub for audio processing
 - rich for CLI interface
+- ElevenLabs for voice isolation
 
 ## Error Handling
 

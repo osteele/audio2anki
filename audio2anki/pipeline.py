@@ -228,10 +228,8 @@ class PipelineOptions:
     source_language: LanguageCode | None = None
     target_language: LanguageCode | None = None
     output_folder: Path | None = None
-    skip_voice_isolation: bool = False
+    voice_isolation: bool = False
     translation_provider: TranslationProvider = TranslationProvider.OPENAI
-
-    # Caching options
     use_artifact_cache: bool = True
     skip_cache_cleanup: bool = False
 
@@ -510,7 +508,7 @@ class PipelineRunner:
 
         # Define pipeline stages, optionally skipping voice isolation
         pipeline = [transcode]
-        if not options.skip_voice_isolation:
+        if options.voice_isolation:
             pipeline.append(voice_isolation)
         pipeline.extend([transcribe, translate, generate_deck])
         initial_artifacts = {"input_path": input_file}

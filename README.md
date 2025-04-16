@@ -108,6 +108,14 @@ Process a podcast with custom segment lengths and silence detection:
 audio2anki podcast.mp3 --min-length 2.0 --max-length 20.0 --silence-thresh -35
 ```
 
+Process an audio file with voice isolation:
+```bash
+audio2anki --voice-isolation input.m4a
+```
+
+Voice isolation (optional, via ElevenLabs API) can be enabled with the `--voice-isolation` flag. This uses approximately 1000 ElevenLabs credits per minute of audio (free plan: 10,000 credits/month).
+By default, transcription uses the raw (transcoded) audio. Use `--voice-isolation` to remove background noise before transcription.
+
 ### Command Line Options
 
 ```bash
@@ -123,6 +131,7 @@ Options:
   --language LANG    Source language (default: auto-detect)
   --silence-thresh DB Silence threshold (default: -40)
   --translation-provider {openai,deepl}  Translation service to use (default: openai)
+  --voice-isolation  Enable voice isolation (via ElevenLabs API)
 ```
 
 ### Environment Variables

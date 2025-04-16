@@ -8,6 +8,8 @@ All notable changes to audio2anki will be documented in this file.
 - Improved audio segment extraction with padding and silence detection
 - Added configuration options for silence threshold and audio padding
 - Added deck summary display showing timestamps and content after deck creation
+- Replaced `skip-voice-isolation` to disable voice isolation, with `--voice-isolation` to enable it. Voice isolation is
+  now disabled by default.
 - API errors during voice isolation now display as user-facing errors
 
 ### Fixed

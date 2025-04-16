@@ -25,6 +25,7 @@ audio2anki
 - `--keep-cache`: Keep the temporary cache directory after processing (for debugging)
 - `--target-language`: Target language for translation (default: system language)
 - `--source-language`: Source language for transcription (default: chinese)
+- `--voice-isolation`: Isolate voice from background noise using the ElevenLabs API before transcription. Uses approximately 1000 ElevenLabs credits per minute of audio (the free plan provides 10,000 credits per month). If not specified, transcription uses the raw (transcoded) audio.
 
 ## Configuration Management
 
@@ -87,7 +88,12 @@ audio2anki config COMMAND [ARGS]
    audio2anki input.mp3 --keep-cache
    ```
 
-4. Change configuration settings:
+4. Process a file with voice isolation:
+   ```bash
+   audio2anki --voice-isolation input.m4a
+   ```
+
+5. Change configuration settings:
    ```bash
    audio2anki config set use_cache true
    ```
