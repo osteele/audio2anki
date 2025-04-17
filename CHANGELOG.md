@@ -11,6 +11,14 @@ All notable changes to audio2anki will be documented in this file.
 - Replaced `skip-voice-isolation` to disable voice isolation, with `--voice-isolation` to enable it. Voice isolation is
   now disabled by default.
 - API errors during voice isolation now display as user-facing errors
+- Enhanced add2anki integration:
+  - Checks for add2anki in PATH and verifies it meets version requirement (>=0.1.2).
+  - If add2anki is present but outdated, and uv is not available, prints upgrade instructions.
+  - If add2anki is missing or too old and uv is available, offers to use uv as a fallback.
+  - Adds ADD2ANKI_MIN_VERSION constant for version management.
+  - The deck's `import_to_anki.sh` script is now smarter: it checks for `add2anki` at version >=0.1.2 and uses it if available, falling back to `uv` otherwise. If `add2anki` is present but too old, it prints an upgrade message. This logic was moved from the README to the script itself.
+  - Updated README with import instructions, version check, and upgrade/fallback guidance.
+  - Updated deck README.md to reference add2anki and uv options.
 
 ### Fixed
 - Persistent cache keys now use artifact basenames (which include content hashes) instead of full temp file paths, ensuring cache hits across runs regardless of temp directory changes.

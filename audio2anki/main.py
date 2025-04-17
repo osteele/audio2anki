@@ -2,10 +2,14 @@
 
 import locale
 import logging
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
 import click
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.table import Table
@@ -14,11 +18,15 @@ from rich.text import Text
 from .anki import display_deck_summary
 from .config import edit_config, load_config, reset_config, set_config_value
 from .pipeline import PipelineOptions, run_pipeline
+from .translate import TranslationProvider
 from .types import LanguageCode
 from .utils import is_deck_folder, is_empty_directory
 
 # Setup basic logging configuration
 console = Console()
+
+# minimum add2anki version required
+ADD2ANKI_MIN_VERSION = ">=0.1.2"
 
 
 def configure_logging(debug: bool = False) -> None:
@@ -220,12 +228,9 @@ def process(
     )
 
     # Convert translation_provider string to enum
-    from .translate import TranslationProvider
-
     translation_provider_enum = TranslationProvider.from_string(translation_provider)
 
     # Translate source_language from a language name to a language code
-
     options = PipelineOptions(
         source_language=optional_language_name_to_code(source_language),
         target_language=optional_language_name_to_code(target_language),
@@ -249,6 +254,31 @@ def process(
     readme_path = Path(deck_dir) / "README.md"
     if readme_path.exists():
         console.print(f"[green]See[/] {readme_path} [green]for instructions on how to import the deck into Anki.[/]")
+        # Offer direct import via add2anki or uv
+        add2anki_cmd = shutil.which("add2anki")
+        uv_cmd = shutil.which("uv")
+        spec = SpecifierSet(ADD2ANKI_MIN_VERSION)
+        if add2anki_cmd:
+            try:
+                result = subprocess.run(["add2anki", "--version"], capture_output=True, text=True)
+                ver = Version(result.stdout.strip())
+            except Exception:
+                ver = None
+            if ver and ver in spec:
+                console.print(f"[green]Import directly:[/] add2anki {deck_dir}/deck.csv --tags audio2anki")
+            else:
+                if not uv_cmd:
+                    console.print(
+                        f"[yellow]add2anki version {ver or 'unknown'} is too old, please upgrade to "
+                        f"{ADD2ANKI_MIN_VERSION}[/]"
+                    )
+                else:
+                    console.print(
+                        f"[yellow]add2anki version {ver or 'unknown'} is too old, use uv:[/] uv tool add2anki "
+                        f"{deck_dir}/deck.csv --tags audio2anki"
+                    )
+        elif uv_cmd:
+            console.print(f"[green]Import via uv:[/] uv tool add2anki {deck_dir}/deck.csv --tags audio2anki")
 
 
 @cli.group()

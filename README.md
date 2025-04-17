@@ -201,6 +201,36 @@ The script creates:
 
 **Note**: The audio filenames include a hash of the source file to prevent conflicts when importing multiple decks.
 
+### Importing with add2anki (Recommended)
+
+If you have [add2anki](https://github.com/osteele/add2anki) version >=0.1.2 installed, you can import directly:
+
+```bash
+add2anki deck.csv --tags audio2anki
+```
+
+To check your installed version:
+
+```bash
+add2anki --version
+```
+
+If your version is older than >=0.1.2, upgrade with:
+
+```bash
+uv tool update add2anki
+# or, if you installed with pipx:
+pipx upgrade add2anki
+```
+
+If you don't have add2anki, or your version is too old, and you have [uv](https://docs.astral.sh/uv/getting-started/installation/) installed, you can run:
+
+```bash
+uv tool add2anki deck.csv --tags audio2anki
+```
+
+See the deck README.md for more details.
+
 ## Development
 
 ```bash
