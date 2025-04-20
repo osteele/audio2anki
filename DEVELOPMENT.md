@@ -71,3 +71,28 @@ The project uses GitHub Actions for continuous integration. The workflow runs:
 - Tests with pytest
 
 The workflow runs on multiple Python versions (3.10, 3.11, 3.12) to ensure compatibility.
+
+## Development Utilities
+
+### Cache Bypass for Pipeline Stages
+
+When developing or debugging specific pipeline stages, you can bypass the cache for those stages using the `--bypass-cache-for` option:
+
+```bash
+# Bypass cache for the transcribe stage
+audio2anki process input.mp3 --bypass-cache-for transcribe
+
+# Bypass cache for multiple stages
+audio2anki process input.mp3 --bypass-cache-for "transcribe,translate"
+
+# Alternative syntax for multiple stages
+audio2anki process input.mp3 --bypass-cache-for transcribe --bypass-cache-for translate
+```
+
+This option is hidden from standard help output since it's intended for development use. It forces the specified pipeline stages to run from scratch, ignoring any cached results.
+
+Available pipeline stages:
+- `transcode`: Audio/video conversion
+- `voice_isolation`: Voice isolation (if enabled)
+- `transcribe`: Speech-to-text transcription
+- `translate`: Text translation

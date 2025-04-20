@@ -204,6 +204,13 @@ def cli():
 )
 @click.option("--no-cache", is_flag=True, help="Disable using the persistent artifact cache")
 @click.option("--skip-cache-cleanup", is_flag=True, help="Skip cleaning up old items from the cache")
+@click.option(
+    "--bypass-cache-for",
+    hidden=True,
+    multiple=True,
+    type=str,
+    help="Bypass cache for specific pipeline stages (comma-separated names)",
+)
 def process(
     input_file: str,
     debug: bool = False,
@@ -214,6 +221,7 @@ def process(
     translation_provider: str = "openai",
     no_cache: bool = False,
     skip_cache_cleanup: bool = False,
+    bypass_cache_for: tuple[str, ...] = (),
 ) -> None:
     """Process an audio/video file and generate Anki flashcards."""
     configure_logging(debug)
@@ -230,6 +238,14 @@ def process(
     # Convert translation_provider string to enum
     translation_provider_enum = TranslationProvider.from_string(translation_provider)
 
+    # Process bypass_cache_for option - handle both comma-separated and multiple values
+    bypass_stages: list[str] = []
+    for stage_value in bypass_cache_for:
+        # stage_value is potentially comma-separated
+        for stage in stage_value.split(","):
+            cleaned_stage = stage.strip()
+            if cleaned_stage:
+                bypass_stages.append(cleaned_stage)
     # Translate source_language from a language name to a language code
     options = PipelineOptions(
         source_language=optional_language_name_to_code(source_language),
@@ -240,6 +256,7 @@ def process(
         translation_provider=translation_provider_enum,
         use_artifact_cache=not no_cache,
         skip_cache_cleanup=skip_cache_cleanup,
+        bypass_cache_stages=bypass_stages,
     )
     result = run_pipeline(Path(input_file), console, options)
     deck_dir = str(result.deck_dir)
@@ -297,10 +314,10 @@ def edit():
         raise click.ClickException(message)
 
 
-@config.command()
+@config.command(name="set")
 @click.argument("key")
 @click.argument("value")
-def set(key: str, value: str):  # noqa: A001
+def set_command(key: str, value: str):
     """Set a configuration value."""
     success, message = set_config_value(key, value)
     if success:
@@ -309,8 +326,8 @@ def set(key: str, value: str):  # noqa: A001
         raise click.ClickException(message)
 
 
-@config.command()
-def list():  # noqa: A001
+@config.command(name="list")
+def list_command():
     """List all configuration settings."""
     config = load_config()
     config_dict = config.to_dict()

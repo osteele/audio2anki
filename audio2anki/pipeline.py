@@ -232,6 +232,7 @@ class PipelineOptions:
     translation_provider: TranslationProvider = TranslationProvider.OPENAI
     use_artifact_cache: bool = True
     skip_cache_cleanup: bool = False
+    bypass_cache_stages: list[str] = field(default_factory=list[str])
 
 
 @dataclass
@@ -272,8 +273,10 @@ class PipelineProgress:
         # Only create a new task if one doesn't already exist for this stage
         if stage_name not in self.stage_tasks:
             self.current_stage = stage_name
+            # Format the stage name for display (capitalize first letter)
+            display_name = stage_name.capitalize()
             # Create task with start=False to ensure proper timing
-            task_id = self.progress.add_task(f"{stage_name}...", total=100, start=False)
+            task_id = self.progress.add_task(f"{display_name}...", total=100, start=False)
             self.stage_tasks[stage_name] = task_id
             # Start the task explicitly
             self.progress.start_task(task_id)
@@ -528,6 +531,10 @@ class PipelineRunner:
         if not func.produced_artifacts:
             return False
 
+        # Check if this stage is explicitly set to bypass cache
+        if func.__name__ in self.options.bypass_cache_stages:
+            return False
+
         # Check if artifact caching is disabled globally
         return self.options.use_artifact_cache
 
@@ -656,7 +663,12 @@ class PipelineRunner:
             self.update_artifacts(func, artifact_paths)
             result = None
         else:
-            logging.debug(f"Running {func.__name__} (use_cache={use_cache}, cache_hit={cache_hit})")
+            # Log whether this stage is forced to bypass cache
+            bypass_msg = ""
+            if func.__name__ in self.options.bypass_cache_stages:
+                bypass_msg = " [cache bypass forced]"
+
+            logging.debug(f"Running {func.__name__} (use_cache={use_cache}, cache_hit={cache_hit}){bypass_msg}")
             result = func(context=stage_context, **kwargs)
 
             # Store results in cache after running
@@ -735,11 +747,11 @@ class PipelineRunner:
                 artifact_paths[artifact_name] = temp_path
                 logger.debug(f"Copied artifact from persistent cache to temporary cache at {temp_path}")
             else:
-                logger.debug(f"❌ Cache MISS for '{artifact_name}'")
+                logger.debug(f" Cache MISS for '{artifact_name}'")
                 all_found = False
                 break
         result = all_found and bool(artifact_paths)
-        logger.debug(f"Overall cache {'✅ HIT' if result else '❌ MISS'} for {func_name}")
+        logger.debug(f"Overall cache {' HIT' if result else ' MISS'} for {func_name}")
         return result, artifact_paths
 
     def store_in_persistent_cache(
@@ -770,12 +782,10 @@ class PipelineRunner:
                     stored_path = artifact_cache.store_artifact(
                         artifact_name, cache_key, input_basenames, artifact_path, extension
                     )
-                    logger.debug(f"✅ Stored '{artifact_name}' in persistent cache (hash {cache_key}) at {stored_path}")
+                    logger.debug(f" Stored '{artifact_name}' in persistent cache (hash {cache_key}) at {stored_path}")
                 except Exception as e:
-                    error_msg = f"❌ Failed to store '{artifact_name}' in persistent cache: {e}"
+                    error_msg = f" Failed to store '{artifact_name}' in persistent cache: {e}"
                     logger.error(error_msg)
-                    from rich.console import Console
-
                     console = Console(stderr=True)
                     console.print(f"[bold red]Error:[/] {error_msg}")
                     console.print("[yellow]Hint:[/] Check disk space or disable artifact cache with --no-cache flag.")
@@ -783,10 +793,8 @@ class PipelineRunner:
 
                     sys.exit(1)
             else:
-                error_msg = f"❌ Cannot store '{artifact_name}' in cache - file does not exist at {artifact_path}"
+                error_msg = f" Cannot store '{artifact_name}' in cache - file does not exist at {artifact_path}"
                 logger.error(error_msg)
-                from rich.console import Console
-
                 console = Console(stderr=True)
                 console.print(f"[bold red]Error:[/] {error_msg}")
                 import sys
