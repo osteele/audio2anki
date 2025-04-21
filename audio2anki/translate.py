@@ -1,5 +1,6 @@
 """Translation module using OpenAI or DeepL API."""
 
+import json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import Enum
@@ -7,7 +8,8 @@ from pathlib import Path
 from typing import Any, Literal, TypedDict
 
 import deepl
-from openai import OpenAI
+from openai import AuthenticationError, OpenAI, RateLimitError
+from pydantic import BaseModel, Field
 from rich.progress import Progress, TaskID
 
 from .transcribe import TranscriptionSegment, load_transcript, save_transcript
@@ -45,7 +47,7 @@ class TranslationParams(TypedDict):
 # Constants used for translation
 OPENAI_MODEL: Literal["gpt-4o-mini"] = "gpt-4o-mini"
 
-TRANSLATION_PROMPTS = {
+TRANSLATION_PROMPTS: dict[str, str] = {
     "translation": "You are a translator. Translate the given text to {target_language}.",
     "pinyin": (
         "You are a Chinese language expert. For the given Chinese text:\n"
@@ -55,10 +57,12 @@ TRANSLATION_PROMPTS = {
         "4. Use spaces only between words, not syllables\n"
         "5. Do not include any other text or punctuation\n\n"
         "Examples:\n"
-        "Input: 我姓王，你可以叫我小王。\n"
-        "Output: wǒ xìngwáng nǐ kěyǐ jiào wǒ Xiǎo Wáng\n\n"
-        "Input: 他在北京大学学习。\n"
-        "Output: tā zài Běijīng Dàxué xuéxí"
+        "Source: 我姓王，你可以叫我小王。\n"
+        "Source Pronunciation: wǒ xìngwáng nǐ kěyǐ jiào wǒ Xiǎo Wáng\n\n"
+        "Translation: My last name is Wang, you can call me Xiao Wang.\n\n"
+        "Source: 他在北京大学学习。\n"
+        "Source Pronunciation: tā zài Běijīng Dàxué xuéxí\n"
+        "Translation: He studies at Peking University.\n\n"
     ),
     "hiragana": (
         "You are a Japanese language expert. For the given Japanese text:\n"
@@ -66,12 +70,48 @@ TRANSLATION_PROMPTS = {
         "2. Keep spaces and punctuation as in the original text\n"
         "3. Do not include any other text or explanations\n\n"
         "Examples:\n"
-        "Input: 私は田中です。\n"
-        "Output: わたしはたなかです。\n\n"
-        "Input: 東京大学で勉強しています。\n"
-        "Output: とうきょうだいがくでべんきょうしています。"
+        "Source: 私は田中です。\n"
+        "Source Pronunciation: わたしはたなかです。\n"
+        "Translation: I am Tanaka.\n\n"
+        "Source: 東京大学で勉強しています。\n"
+        "Source Pronunciation: とうきょうだいがくでべんきょうしています。\n"
+        "Translation: I am studying at Tokyo University.\n\n"
     ),
 }
+
+
+class TranslationItem(BaseModel):
+    start_time: float
+    end_time: float
+    text: str
+    translation: str
+    pronunciation: str | None = None
+
+
+class TranslationResponse(BaseModel):
+    items: list[TranslationItem] = Field(..., description="Array of translation results.")
+
+
+class OpenAIApiTranslationItem(BaseModel):
+    start_time: float
+    translation: str
+    pronunciation: str | None = None
+
+
+class OpenAIApiTranslationResponse(BaseModel):
+    items: list[OpenAIApiTranslationItem] = Field(..., description="Array of translation results.")
+
+
+class OpenAIStructuredRefusalError(Exception):
+    pass
+
+
+class OpenAIRateLimitError(Exception):
+    pass
+
+
+class OpenAIInvalidKeyError(Exception):
+    pass
 
 
 def get_translation_hash(
@@ -155,37 +195,49 @@ def get_reading(text: str, source_language: LanguageCode, client: OpenAI) -> str
 
 
 def translate_with_openai(
-    text: str,
+    transcript: list[TranscriptionSegment],
     source_language: LanguageCode | None,
     target_language: LanguageCode,
     client: OpenAI,
-) -> tuple[str, str | None]:
-    """Translate text using OpenAI API.
-
-    Returns:
-        Tuple of (translation, reading). Reading is pinyin for Chinese or hiragana for Japanese.
-    """
-    response = client.chat.completions.create(
-        model=OPENAI_MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": TRANSLATION_PROMPTS["translation"].format(target_language=target_language),
-            },
-            {"role": "user", "content": f"Translate the following text to {target_language}:\n{text}"},
-        ],
-    )
-
-    translation = response.choices[0].message.content
-    if not translation:
-        raise ValueError("Empty response from OpenAI")
-
-    # Get reading if source is Chinese or Japanese
-    reading = None
-    if source_language:
-        reading = get_reading(text, source_language, client)
-
-    return translation.strip(), reading
+) -> TranslationResponse:
+    """Translate a transcript using OpenAI API with structured response."""
+    openai_input: list[dict[str, str | float]] = [{"source": s.text, "start_time": s.start} for s in transcript]
+    if source_language and source_language.lower() in ["zh", "zh-cn", "zh-tw"]:
+        system_prompt = TRANSLATION_PROMPTS["pinyin"]
+    elif source_language and source_language.lower() in ["ja", "ja-jp"]:
+        system_prompt = TRANSLATION_PROMPTS["hiragana"]
+    else:
+        system_prompt = TRANSLATION_PROMPTS["translation"].format(target_language=target_language)
+    user_prompt = f"Transcript: {json.dumps(openai_input, ensure_ascii=False)}"
+    try:
+        completion = client.beta.chat.completions.parse(
+            model=OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            response_format=OpenAIApiTranslationResponse,
+        )
+        message = completion.choices[0].message
+        if getattr(message, "refusal", None):
+            raise OpenAIStructuredRefusalError(message.refusal)
+        if not hasattr(message, "parsed") or message.parsed is None:
+            raise OpenAIStructuredRefusalError("No structured response: " + repr(message))
+        items = [
+            TranslationItem(
+                start_time=s.start,
+                end_time=s.end,
+                text=s.text,
+                translation=item.translation,
+                pronunciation=item.pronunciation,
+            )
+            for s, item in zip(transcript, message.parsed.items, strict=True)
+        ]
+        return TranslationResponse(items=items)
+    except AuthenticationError as e:
+        raise OpenAIInvalidKeyError("Invalid OpenAI API key. Please check your credentials.") from e
+    except RateLimitError as e:
+        raise OpenAIRateLimitError("OpenAI API rate limit exceeded. Please try again later.") from e
 
 
 def translate_with_deepl(
@@ -238,19 +290,7 @@ def translate_single_segment(
     use_deepl: bool = False,
     openai_client: OpenAI | None = None,
 ) -> tuple[TranscriptionSegment, TranscriptionSegment | None, bool]:
-    """Translate a single segment to target language.
-
-    Args:
-        segment: Audio segment to translate
-        source_language: Source language of the text
-        target_language: Target language for translation
-        translator: Either OpenAI client or DeepL translator
-        use_deepl: Whether to use DeepL for translation
-        openai_client: OpenAI client for readings when using DeepL
-
-    Returns:
-        Tuple of (translated_segment, reading_segment, success flag)
-    """
+    """Translate a single segment to target language."""
     try:
         if use_deepl:
             translation, reading = translate_with_deepl(
@@ -261,12 +301,7 @@ def translate_single_segment(
                 openai_client,
             )
         else:
-            translation, reading = translate_with_openai(
-                segment.text,
-                source_language,
-                target_language,
-                translator,
-            )
+            raise NotImplementedError("OpenAI path should batch segments, not call per-segment translation.")
 
         translated_segment = TranscriptionSegment(
             start=segment.start,
@@ -336,17 +371,7 @@ def translate_segments_to_json(
     source_language: LanguageCode | None = None,
     translation_provider: TranslationProvider = TranslationProvider.OPENAI,
 ) -> None:
-    """Translate transcript and save as JSON file with transcription, translation, and pronunciation.
-
-    Args:
-        input_file: Path to input transcript file (SRT)
-        output_file: Path where JSON file with all data will be saved
-        target_language: Target language for translation
-        task_id: Task ID for progress tracking
-        progress: Progress bar instance
-        source_language: Source language of the text (optional)
-        translation_provider: Provider to use for translation (OpenAI or DeepL)
-    """
+    """Translate transcript and save as JSON file with transcription, translation, and pronunciation."""
     # Check for API keys
     deepl_token = os.environ.get("DEEPL_API_TOKEN")
     openai_key = os.environ.get("OPENAI_API_KEY")
@@ -393,48 +418,61 @@ def translate_segments_to_json(
     total_segments = len(segments)
     progress.update(task_id, total=total_segments)
 
-    # Use ThreadPoolExecutor for parallel processing
     enriched_segments: list[TranscriptionSegment] = []
     total_success = 0
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        # Submit all translation tasks
-        future_to_segment = {
-            executor.submit(
-                translate_single_segment,
-                segment,
-                source_language,
-                target_language,
-                translator,
-                use_deepl,
-                openai_client,  # Always pass OpenAI client for readings
-            ): segment
-            for segment in segments
-        }
+    if use_deepl:
+        # Use ThreadPoolExecutor for parallel processing for DeepL
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            future_to_segment = {
+                executor.submit(
+                    translate_single_segment,
+                    segment,
+                    source_language,
+                    target_language,
+                    translator,
+                    use_deepl,
+                    openai_client,  # Always pass OpenAI client for readings
+                ): segment
+                for segment in segments
+            }
 
-        # Process completed translations
-        for future in as_completed(future_to_segment):
-            translated_segment, reading_segment, success = future.result()
-            original_segment = future_to_segment[future]
-
-            # Create an enriched segment with all information
+            for future in as_completed(future_to_segment):
+                translated_segment, reading_segment, success = future.result()
+                original_segment = future_to_segment[future]
+                enriched = TranscriptionSegment(
+                    start=original_segment.start,
+                    end=original_segment.end,
+                    text=original_segment.text,  # Original transcription
+                    translation=translated_segment.text,  # Translation
+                    pronunciation=reading_segment.text if reading_segment else None,  # Pronunciation
+                )
+                enriched_segments.append(enriched)
+                if success:
+                    total_success += 1
+                progress.update(task_id, advance=1)
+    else:
+        # Use OpenAI: batch all segments at once
+        response = translate_with_openai(
+            segments,
+            source_language,
+            target_language,
+            openai_client,
+        )
+        for seg, item in zip(segments, response.items, strict=False):
             enriched = TranscriptionSegment(
-                start=original_segment.start,
-                end=original_segment.end,
-                text=original_segment.text,  # Original transcription
-                translation=translated_segment.text,  # Translation
-                pronunciation=reading_segment.text if reading_segment else None,  # Pronunciation
+                start=seg.start,
+                end=seg.end,
+                text=seg.text,
+                translation=item.translation,
+                pronunciation=item.pronunciation,
             )
-
             enriched_segments.append(enriched)
-            if success:
-                total_success += 1
+            total_success += 1
             progress.update(task_id, advance=1)
 
     # Save all data to a single JSON file
-
     save_transcript(enriched_segments, output_file)
-
     progress.update(task_id, description=f"Translation complete ({total_success}/{total_segments} successful)")
 
 
@@ -478,18 +516,37 @@ def translate_segments(
     progress.update(task_id, total=total)
     translated_segments: list[TranscriptionSegment] = []
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        future_to_seg = {
-            executor.submit(
-                translate_single_segment, seg, source_language, target_language, translator, use_deepl, openai_client
-            ): seg
-            for seg in segments
-        }
-        for future in as_completed(future_to_seg):
-            translated_seg, _unused, _unused2 = future.result()
-            seg = future_to_seg[future]
-            # Set the translation on the segment
-            seg.translation = translated_seg.text
+    if use_deepl:
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            future_to_seg = {
+                executor.submit(
+                    translate_single_segment,
+                    seg,
+                    source_language,
+                    target_language,
+                    translator,
+                    use_deepl,
+                    openai_client,
+                ): seg
+                for seg in segments
+            }
+            for future in as_completed(future_to_seg):
+                translated_seg, _unused, _unused2 = future.result()
+                seg = future_to_seg[future]
+                # Set the translation on the segment
+                seg.translation = translated_seg.text
+                translated_segments.append(seg)
+                progress.update(task_id, advance=1)
+    else:
+        response = translate_with_openai(
+            segments,
+            source_language,
+            target_language,
+            openai_client,
+        )
+        for seg, item in zip(segments, response.items, strict=False):
+            seg.translation = item.translation
+            seg.pronunciation = item.pronunciation
             translated_segments.append(seg)
             progress.update(task_id, advance=1)
     return translated_segments

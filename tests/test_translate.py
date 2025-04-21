@@ -80,37 +80,49 @@ def test_fallback_to_openai_when_deepl_fails() -> None:
     """Test fallback to OpenAI when DeepL initialization fails."""
     segment = TranscriptionSegment(start=0.0, end=1.0, text="Hola", translation=None)
 
-    # Set up mock OpenAI response
-    mock_message = Mock()
-    mock_message.content = "Hello"
-    mock_choice = Mock()
-    mock_choice.message = mock_message
-    mock_response = Mock()
-    mock_response.choices = [mock_choice]
+    # --- Mock successful OpenAI ParsedUsage response --- #
+    mock_openai_item = Mock()
+    mock_openai_item.translation = "Hello"
+    mock_openai_item.pronunciation = None
+
+    mock_parsed_response = Mock()
+    mock_parsed_response.items = [mock_openai_item]
+
+    mock_openai_message = Mock()
+    # Set required attributes, even if None for this test
+    mock_openai_message.refusal = None
+    mock_openai_message.parsed = mock_parsed_response
+
+    mock_openai_choice = Mock()
+    mock_openai_choice.message = mock_openai_message
+
+    mock_completion = Mock()
+    mock_completion.choices = [mock_openai_choice]
+    # --- End Mock successful OpenAI ParsedUsage response --- #
 
     with patch.dict(os.environ, {"DEEPL_API_TOKEN": "test-key", "OPENAI_API_KEY": "test-key"}):
         with patch("deepl.Translator") as mock_deepl:
             # Make DeepL fail to trigger fallback
             mock_deepl.side_effect = Exception("DeepL error")
 
-            with patch("openai.OpenAI") as mock_openai:
-                # Setup OpenAI mock with an error that triggers fallback to text
+            # Patch OpenAI instantiation within the translate module
+            with patch("audio2anki.translate.OpenAI") as mock_openai_constructor:
                 mock_client = MagicMock()
-                mock_error = httpx.HTTPStatusError(
-                    "401 Unauthorized", request=Mock(spec=httpx.Request), response=Mock(spec=httpx.Response)
-                )
-                mock_client.chat.completions.create.side_effect = mock_error
-                mock_openai.return_value = mock_client
+                # Configure the mock client's parse method to return the successful mock completion
+                mock_client.beta.chat.completions.parse.return_value = mock_completion
+                mock_openai_constructor.return_value = mock_client
 
                 with Progress() as progress:
                     task_id = progress.add_task("Translating", total=1)
 
-                    # Translate segment - error should cause fallback to original text
+                    # Translate segment - should succeed using mocked OpenAI
                     result = translate_segments([segment], LanguageCode("en"), task_id, progress)
 
-                    # Verify translation matches the original text (due to error fallback)
+                    # Verify translation matches the mock OpenAI response
                     assert len(result) == 1
-                    assert result[0].translation == segment.text
+                    assert result[0].translation == "Hello"
+                    # Verify the correct mock method was called
+                    mock_client.beta.chat.completions.parse.assert_called_once()
 
 
 def test_error_handling() -> None:
