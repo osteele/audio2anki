@@ -5,20 +5,20 @@ description = "Convert audio and video files into Anki flashcard decks with tran
 authors = [{ name = "Oliver Steele", email = "steele@osteele.com" }]
 dependencies = [
     "click>=8.1.7",
-    "httpx>=0.26.0",         # For Eleven Labs API
+    "httpx>=0.26.0",                # For Eleven Labs API
     "rich>=13.7.0",
     "openai>=1.8.0",
     "pydub>=0.25.1",
     "deepl>=1.16.1",
-    "gradio-client>=0.10.1",
     "tomli-w>=1.2.0",
     "librosa",
     "soundfile",
     "numpy",
     "langcodes>=3.5.0",
+    "contextual-langdetect>=0.1.5",
 ]
 
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.09,<3.13"
 # 3.13 removes the aifc and sunau modules.
 # librosa depends on audioread which uses these.
 # https://github.com/beetbox/audioread/issues/144
@@ -61,7 +61,7 @@ dev = [
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py39"
 src = ["audio2ank", "tests"]
 lint.select = [
     "E",   # pycodestyle errors

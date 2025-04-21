@@ -217,6 +217,9 @@ def test_pipeline_runner_should_use_cache(pipeline_runner: PipelineRunner) -> No
     def terminal_func(context: PipelineContext) -> None:
         pass
 
+    # Add functions to pipeline
+    pipeline_runner.pipeline = [normal_func, terminal_func]
+
     # Test normal function with bypass_cache=False
     assert pipeline_runner.should_use_cache(normal_func) is True
 
@@ -226,6 +229,12 @@ def test_pipeline_runner_should_use_cache(pipeline_runner: PipelineRunner) -> No
     # Test with use_artifact_cache=False
     pipeline_runner.options.use_artifact_cache = False
     assert pipeline_runner.should_use_cache(normal_func) is False
+
+    # Test with bypass_cache_stages
+    pipeline_runner.options.use_artifact_cache = True
+    pipeline_runner.options.bypass_cache_stages = ["normal_func"]
+    assert pipeline_runner.should_use_cache(normal_func) is False
+    assert pipeline_runner.should_use_cache(terminal_func) is False
 
 
 def test_pipeline_runner_get_cached_artifacts(pipeline_runner: PipelineRunner, tmp_path: Path) -> None:
@@ -255,6 +264,31 @@ def test_pipeline_runner_get_cached_artifacts(pipeline_runner: PipelineRunner, t
         cache_hit, paths = pipeline_runner.get_cached_artifacts(test_func)
         assert cache_hit is False
         assert len(paths) == 0
+
+
+def test_bypass_cache_validation(pipeline_runner: PipelineRunner) -> None:
+    """Test validation of bypass_cache_stages."""
+
+    # Create test pipeline functions
+    @pipeline_function(extension="txt")
+    def func1(context: PipelineContext) -> None:
+        pass
+
+    @pipeline_function(extension="txt")
+    def func2(context: PipelineContext) -> None:
+        pass
+
+    # Set up pipeline
+    pipeline_runner.pipeline = [func1, func2]
+
+    # Valid stage names should not raise
+    pipeline_runner.options.bypass_cache_stages = ["func1"]
+    pipeline_runner.__post_init__()  # Should not raise
+
+    # Invalid stage name should raise
+    pipeline_runner.options.bypass_cache_stages = ["nonexistent_func"]
+    with pytest.raises(ValueError, match="Invalid pipeline stage 'nonexistent_func'"):
+        pipeline_runner.__post_init__()
 
 
 def test_pipeline_runner_update_artifacts(pipeline_runner: PipelineRunner, tmp_path: Path) -> None:
@@ -343,7 +377,17 @@ def test_pipeline_stages(test_audio_file: Path, tmp_path: Path) -> None:
         ):
             # Configure the mocks to create files when called
             mock_transcode_audio.return_value = None
-            mock_transcribe_audio.return_value = []  # Empty list of segments
+
+            def fake_transcribe_audio(
+                audio_file: Path,
+                transcript_path: Path,
+                *args: object,
+                **kwargs: object,
+            ) -> list[object]:
+                transcript_path.write_text('{"segments": []}')
+                return []
+
+            mock_transcribe_audio.side_effect = fake_transcribe_audio
             mock_translate_segments.return_value = None
             mock_generate_anki_deck.return_value = PipelineResult(deck_dir=dummy_result_path, segments=[])
 

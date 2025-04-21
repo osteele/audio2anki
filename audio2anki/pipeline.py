@@ -273,8 +273,8 @@ class PipelineProgress:
         # Only create a new task if one doesn't already exist for this stage
         if stage_name not in self.stage_tasks:
             self.current_stage = stage_name
-            # Format the stage name for display (capitalize first letter)
-            display_name = stage_name.capitalize()
+            # Format the stage name for display (replace underscores with spaces and capitalize)
+            display_name = stage_name.replace("_", " ").capitalize()
             # Create task with start=False to ensure proper timing
             task_id = self.progress.add_task(f"{display_name}...", total=100, start=False)
             self.stage_tasks[stage_name] = task_id
@@ -513,7 +513,7 @@ class PipelineRunner:
         pipeline = [transcode]
         if options.voice_isolation:
             pipeline.append(voice_isolation)
-        pipeline.extend([transcribe, translate, generate_deck])
+        pipeline.extend([transcribe, select_sentences, translate, generate_deck])
         initial_artifacts = {"input_path": input_file}
 
         return cls(
@@ -523,6 +523,17 @@ class PipelineRunner:
             artifacts=initial_artifacts,
             pipeline=pipeline,
         )
+
+    def __post_init__(self) -> None:
+        """Validate configuration after initialization."""
+        # Validate bypass_cache_stages against actual pipeline functions
+        valid_stage_names = {func.__name__ for func in self.pipeline}
+        for stage_name in self.options.bypass_cache_stages:
+            if stage_name not in valid_stage_names:
+                raise ValueError(
+                    f"Invalid pipeline stage '{stage_name}' for bypass-cache-for. "
+                    f"Valid stages are: {', '.join(sorted(valid_stage_names))}"
+                )
 
     def should_use_cache(self, func: PipelineFunctionType) -> bool:
         """Determine if caching should be used for this function."""
@@ -928,13 +939,24 @@ def transcribe(context: PipelineContext, voice_isolation: Path | None = None, tr
     )
 
 
+@pipeline_function(extension="json")
+def select_sentences(context: PipelineContext, transcribe: Path) -> None:
+    """Filter transcript segments according to selection rules."""
+    from .select_sentences import filter_segments
+    from .transcribe import load_transcript_json, save_transcript_json
+
+    segments = load_transcript_json(transcribe)
+    filtered = filter_segments(segments, source_language=context.source_language)
+    save_transcript_json(filtered, context.get_artifact_path())
+
+
 @pipeline_function(extension="json", hash=get_translation_hash)
-def translate(context: PipelineContext, transcribe: Path) -> None:
+def translate(context: PipelineContext, select_sentences: Path) -> None:
     """Translate transcribed text to target language."""
     from .translate import translate_segments_to_json
 
     translate_segments_to_json(
-        input_file=transcribe,
+        input_file=select_sentences,
         output_file=context.get_artifact_path(),
         target_language=context.target_language or LanguageCode("en"),
         task_id=context.stage_task_id,

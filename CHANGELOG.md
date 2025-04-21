@@ -11,6 +11,10 @@ All notable changes to audio2anki will be documented in this file.
 - Replaced `skip-voice-isolation` to disable voice isolation, with `--voice-isolation` to enable it. Voice isolation is
   now disabled by default.
 - API errors during voice isolation now display as user-facing errors
+- Added intelligent sentence selection/filtering system:
+  - Filters out one-word segments, sentences ending with commas, and duplicates
+  - Detects and filters by language to ensure consistent decks
+  - Smart handling of multi-character CJK text and punctuation
 - Enhanced add2anki integration:
   - Checks for add2anki in PATH and verifies it meets version requirement (>=0.1.2).
   - If add2anki is present but outdated, and uv is not available, prints upgrade instructions.

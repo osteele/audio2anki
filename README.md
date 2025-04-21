@@ -28,6 +28,9 @@ Learning Resources](https://osteele.com/topics/language-learning/).
 - ✂️ Smart audio segmentation
 - 📝 Optional manual transcript input
 - 🎴 Anki-ready output with embedded audio
+- 🈷️ Intelligent sentence filtering for better learning materials:
+  - Removes one-word segments and incomplete sentences
+  - Eliminates duplicates and maintains language consistency
 
 ## Requirements
 
