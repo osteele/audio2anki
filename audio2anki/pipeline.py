@@ -953,9 +953,9 @@ def select_sentences(context: PipelineContext, transcribe: Path) -> None:
 @pipeline_function(extension="json", hash=get_translation_hash)
 def translate(context: PipelineContext, select_sentences: Path) -> None:
     """Translate transcribed text to target language."""
-    from .translate import translate_segments_to_json
+    from .translate import translate_segments
 
-    translate_segments_to_json(
+    translate_segments(
         input_file=select_sentences,
         output_file=context.get_artifact_path(),
         target_language=context.target_language or LanguageCode("en"),

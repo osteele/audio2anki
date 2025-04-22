@@ -367,7 +367,7 @@ def test_pipeline_stages(test_audio_file: Path, tmp_path: Path) -> None:
             # Transcribe
             patch("audio2anki.transcribe.transcribe_audio", autospec=True) as mock_transcribe_audio,
             # Translate
-            patch("audio2anki.translate.translate_segments_to_json", autospec=True) as mock_translate_segments,
+            patch("audio2anki.translate.translate_segments", autospec=True) as mock_translate_segments,
             # Generate deck
             patch("audio2anki.anki.generate_anki_deck", autospec=True) as mock_generate_anki_deck,
             # Mock Path.exists to return True so file checks pass
