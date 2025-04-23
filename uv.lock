@@ -62,7 +62,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.1.7" },
-    { name = "contextual-langdetect", specifier = ">=0.1.5" },
+    { name = "contextual-langdetect", specifier = ">=0.2.0" },
     { name = "deepl", specifier = ">=1.16.1" },
     { name = "httpx", specifier = ">=0.26.0" },
     { name = "langcodes", specifier = ">=3.5.0" },
@@ -265,15 +265,14 @@ wheels = [
 
 [[package]]
 name = "contextual-langdetect"
-version = "0.1.5"
+version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fast-langdetect" },
-    { name = "rich" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/51/21/5594bceb6ab943fcd00b27efaf81522d062e41f0288d9842da59ecf997db/contextual_langdetect-0.1.5.tar.gz", hash = "sha256:5b672d212161a6d7f6892b64c7106222e4bfaed01cb69251bc121cc27f27c5c3", size = 49313 }
+sdist = { url = "https://files.pythonhosted.org/packages/ae/c5/4acf67c7386298b11201c2d0e5276c44a3ff50baf65645b40b1061f4cd7f/contextual_langdetect-0.2.0.tar.gz", hash = "sha256:28ae4842f283f79ff1a92fab83076fc1be7ae09d5ee90767d0712b5edcb61ab2", size = 49641 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ea/58/22e24f61aaffbca5a0f1cec33db7d2dfb643b8f9d37ff17b29b8f889f582/contextual_langdetect-0.1.5-py3-none-any.whl", hash = "sha256:9cee1e1d514e1487b5e6b2309ac54297d3d408a0df5c1fd73415c4cbc3699df1", size = 8520 },
+    { url = "https://files.pythonhosted.org/packages/e0/8c/cd69f98294cb5d88b551c41646b984917611efc203b853a537545b41620a/contextual_langdetect-0.2.0-py3-none-any.whl", hash = "sha256:320483cef7b3b986d3ef4314fcbc58cb7da14fad656541ad531bb96ccf93f383", size = 8734 },
 ]
 
 [[package]]

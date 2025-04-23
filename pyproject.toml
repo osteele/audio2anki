@@ -14,7 +14,7 @@ dependencies = [
     "soundfile",
     "numpy",
     "langcodes>=3.5.0",
-    "contextual-langdetect>=0.1.5",
+    "contextual-langdetect>=0.2.0",
     "pydantic-ai-slim[openai]>=0.1.3",
 ]
 

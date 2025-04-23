@@ -7,8 +7,9 @@ import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal, TypedDict
+from typing import Literal, TypedDict, cast
 
+import contextual_langdetect
 import deepl
 from pydantic import BaseModel, Field, ValidationError
 from pydantic_ai import Agent
@@ -213,20 +214,16 @@ async def translate_with_openai_stream(
                 completed = len(interim_result.items)
                 logger.info(f"Progress update: Completed {completed} of {total_segments} items")
 
-                # We need to force UI refresh for async context
                 progress.update(task_id, completed=completed, refresh=True)
-                progress.refresh()
-            except ValidationError:
-                logger.debug("Validation error for message: %s", message)
+            except ValidationError as err:
                 if is_final_result:
                     raise
+                logger.debug(f"Validation error {err}\nfor message: {message}")
 
     # Ensure we mark as fully complete at the end
     if result:
         logger.info(f"Final progress update: marking {total_segments} items as complete")
         progress.update(task_id, completed=total_segments, total=total_segments, refresh=True)
-        # Force refresh for async context
-        progress.refresh()
 
     if not result:
         raise ValueError("No translation result was received")
@@ -330,42 +327,33 @@ def translate_single_segment(
     segment: TranscriptionSegment,
     source_language: LanguageCode | None,
     target_language: LanguageCode,
-    translator: Any,
-    use_deepl: bool = False,
+    translator: deepl.Translator,
     model: OpenAIModel | None = None,
 ) -> tuple[TranscriptionSegment, TranscriptionSegment | None, bool]:
     """Translate a single segment to target language."""
-    try:
-        if use_deepl:
-            translation, reading = translate_with_deepl(
-                segment.text,
-                source_language,
-                target_language,
-                translator,
-                model,
-            )
-        else:
-            raise NotImplementedError("OpenAI path should batch segments, not call per-segment translation.")
+    translation, reading = translate_with_deepl(
+        segment.text,
+        source_language,
+        target_language,
+        translator,
+        model,
+    )
 
-        translated_segment = TranscriptionSegment(
+    translated_segment = TranscriptionSegment(
+        start=segment.start,
+        end=segment.end,
+        text=translation,
+    )
+
+    reading_segment: TranscriptionSegment | None = None
+    if reading:
+        reading_segment = TranscriptionSegment(
             start=segment.start,
             end=segment.end,
-            text=translation,
+            text=reading,
         )
 
-        reading_segment: TranscriptionSegment | None = None
-        if reading:
-            reading_segment = TranscriptionSegment(
-                start=segment.start,
-                end=segment.end,
-                text=reading,
-            )
-
-        return translated_segment, reading_segment, True
-
-    except Exception as e:
-        print(f"Translation failed: {e!s}")
-        return segment, None, False
+    return translated_segment, reading_segment, True
 
 
 def normalize_hanzi(text: str) -> str:
@@ -409,10 +397,10 @@ def deduplicate_segments(segments: list[TranscriptionSegment]) -> list[Transcrip
 def translate_segments(
     input_file: Path,
     output_file: Path,
-    target_language: LanguageCode,
     task_id: TaskID,
     progress: Progress,
     source_language: LanguageCode | None = None,
+    target_language: LanguageCode | None = None,
     translation_provider: TranslationProvider = TranslationProvider.OPENAI,
 ) -> None:
     """Translate transcript and save as JSON file with transcription, translation, and pronunciation."""
@@ -423,50 +411,31 @@ def translate_segments(
     if not openai_key:
         raise ValueError("OPENAI_API_KEY environment variable is required for translation and readings")
 
-    # Initialize translator and use_deepl flag
+    if translation_provider == TranslationProvider.DEEPL and not deepl_token:
+        raise ValueError("DEEPL_API_TOKEN environment variable is required for DeepL translation")
+
+    # Initialize translator
     openai_model = OpenAIModel(OPENAI_MODEL)
-    translator = openai_model
-    use_deepl = False
 
-    # Use the specified translation provider
-    if translation_provider == TranslationProvider.DEEPL:
-        if deepl_token:
-            try:
-                logger.info("Attempting to initialize DeepL translator")
-                translator = deepl.Translator(deepl_token)
-                use_deepl = True
-                logger.info("Successfully initialized DeepL translator")
-                progress.update(task_id, description="Translating segments using DeepL...")
-            except Exception as e:
-                print(f"Warning: Failed to initialize DeepL ({e!s}), falling back to OpenAI")
-                logger.warning(f"Failed to initialize DeepL: {e}, falling back to OpenAI")
-                # Fall back to OpenAI
-                translator = openai_model
-                use_deepl = False
-                progress.update(task_id, description="Translating segments using OpenAI...")
-        else:
-            print("Warning: DeepL API token not found, falling back to OpenAI")
-            logger.warning("DeepL API token not found, falling back to OpenAI")
-            # Fall back to OpenAI
-            translator = openai_model
-            use_deepl = False
-            progress.update(task_id, description="Translating segments using OpenAI...")
-    else:  # OpenAI
-        translator = openai_model
-        use_deepl = False
-        progress.update(task_id, description="Translating segments using OpenAI...")
-
-    # Load transcript segments
     segments = load_transcript(input_file)
     total_segments = len(segments)
-    # Reset progress with proper total and completed=0
     progress.update(task_id, total=total_segments, completed=0)
+
+    if not target_language:
+        languages = contextual_langdetect.get_languages_by_count([segment.text for segment in segments])
+        languages = [lang for lang in languages if lang != source_language]
+        if languages:
+            target_language = cast(LanguageCode, languages[0])
+        else:
+            raise ValueError("Unable to detect target language")
 
     # Translate segments
     enriched_segments: list[TranscriptionSegment] = []
     total_success = 0
 
-    if use_deepl:
+    if translation_provider == TranslationProvider.DEEPL:
+        progress.update(task_id, description="Translating segments using DeepL...")
+        translator = deepl.Translator(cast(str, deepl_token))
         with ThreadPoolExecutor(max_workers=4) as executor:
             future_to_seg = {
                 executor.submit(
@@ -475,7 +444,6 @@ def translate_segments(
                     source_language,
                     target_language,
                     translator,
-                    use_deepl,
                     openai_model,  # Always pass OpenAI model for readings
                 ): segment
                 for segment in segments
@@ -498,6 +466,7 @@ def translate_segments(
                 progress.refresh()
     else:
         # Use OpenAI: batch all segments at once using the sync wrapper
+        progress.update(task_id, description="Translating segments using OpenAI...")
         response = translate_with_openai_sync(
             segments,
             source_language,

@@ -61,7 +61,14 @@ def test_translate_with_openai(input_text: str, expected_translation: str) -> No
                 task_id = progress.add_task("Translating", total=1)
 
                 # Translate segment
-                translate_segments(input_file, output_file, LanguageCode("en"), task_id, progress)
+                translate_segments(
+                    input_file,
+                    output_file,
+                    task_id,
+                    progress,
+                    source_language=LanguageCode("en"),
+                    target_language=LanguageCode("en")
+                )
 
                 # Load the result and verify
                 result = load_transcript(output_file)
@@ -124,9 +131,10 @@ def test_translate_with_deepl() -> None:
                 translate_segments(
                     input_file,
                     output_file,
-                    LanguageCode("en"),
                     task_id,
                     progress,
+                    source_language=LanguageCode("en"),
+                    target_language=LanguageCode("es"),
                     translation_provider=TranslationProvider.DEEPL,
                 )
 
@@ -177,9 +185,10 @@ def test_fallback_to_openai_when_deepl_fails() -> None:
                 translate_segments(
                     input_file,
                     output_file,
-                    LanguageCode("en"),
                     task_id,
                     progress,
+                    source_language=LanguageCode("en"),
+                    target_language=LanguageCode("es"),
                     translation_provider=TranslationProvider.DEEPL,  # Should fall back to OpenAI
                 )
 
@@ -201,5 +210,12 @@ def test_no_api_keys_raises_error() -> None:
         with patch.dict(os.environ, {}, clear=True), Progress() as progress:
             task_id = progress.add_task("test", total=1)
             with pytest.raises(ValueError) as exc:
-                translate_segments(input_file, output_file, LanguageCode("en"), task_id, progress)
+                translate_segments(
+                    input_file,
+                    output_file,
+                    task_id,
+                    progress,
+                    source_language=LanguageCode("en"),
+                    target_language=LanguageCode("es")
+                )
             assert "OPENAI_API_KEY environment variable is required" in str(exc.value)
