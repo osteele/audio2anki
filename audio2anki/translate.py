@@ -1,6 +1,8 @@
 """Translation module using OpenAI or DeepL API."""
 
+import asyncio
 import json
+import logging
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import Enum
@@ -8,7 +10,7 @@ from pathlib import Path
 from typing import Any, Literal, TypedDict
 
 import deepl
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
 from rich.progress import Progress, TaskID
@@ -16,6 +18,8 @@ from rich.progress import Progress, TaskID
 from .transcribe import TranscriptionSegment, load_transcript, save_transcript
 from .types import LanguageCode
 from .utils import create_params_hash
+
+logger = logging.getLogger(__name__)
 
 
 class TranslationProvider(str, Enum):
@@ -46,6 +50,8 @@ class TranslationParams(TypedDict):
 
 
 # Constants used for translation
+
+# As of 2025-04-22, this appears to be the fastest cheapest model that supports structured output
 OPENAI_MODEL: Literal["gpt-4o-mini"] = "gpt-4o-mini"
 
 TRANSLATION_PROMPTS: dict[str, str] = {
@@ -161,6 +167,97 @@ def get_reading(text: str, source_language: LanguageCode | None, model: OpenAIMo
     elif source_language.lower() in ["ja", "ja-jp"]:
         return get_hiragana(text, model)
     return None
+
+
+async def translate_with_openai_stream(
+    transcript: list[TranscriptionSegment],
+    source_language: LanguageCode | None,
+    target_language: LanguageCode,
+    model: OpenAIModel,
+    progress: Progress,
+    task_id: TaskID,
+) -> TranslationResponse:
+    """Translate a transcript using OpenAI API with structured streaming response.
+
+    Shows progress information as segments are translated.
+    """
+    openai_input: list[dict[str, str | float]] = [
+        {"source": s.text, "start_time": s.start, "end_time": s.end} for s in transcript
+    ]
+    if source_language and source_language.lower() in ["zh", "zh-cn", "zh-tw"]:
+        system_prompt = TRANSLATION_PROMPTS["pinyin"]
+    elif source_language and source_language.lower() in ["ja", "ja-jp"]:
+        system_prompt = TRANSLATION_PROMPTS["hiragana"]
+    else:
+        system_prompt = TRANSLATION_PROMPTS["translation"].format(target_language=target_language)
+    user_prompt = f"Transcript: {json.dumps(openai_input, ensure_ascii=False)}"
+
+    # Create agent with the model and system prompt
+    agent = Agent(model=model, system_prompt=system_prompt)
+
+    result: TranslationResponse | None = None
+    total_segments = len(transcript)
+
+    # Reset progress to ensure it starts at 0%
+    progress.update(task_id, completed=0, total=total_segments)
+
+    async with agent.run_stream(user_prompt, output_type=TranslationResponse) as stream_result:
+        async for message, is_final_result in stream_result.stream_structured(debounce_by=0.01):
+            try:
+                interim_result = await stream_result.validate_structured_output(
+                    message, allow_partial=not is_final_result
+                )
+                if is_final_result:
+                    result = interim_result
+
+                completed = len(interim_result.items)
+                logger.info(f"Progress update: Completed {completed} of {total_segments} items")
+
+                # We need to force UI refresh for async context
+                progress.update(task_id, completed=completed, refresh=True)
+                progress.refresh()
+            except ValidationError:
+                logger.debug("Validation error for message: %s", message)
+                if is_final_result:
+                    raise
+
+    # Ensure we mark as fully complete at the end
+    if result:
+        logger.info(f"Final progress update: marking {total_segments} items as complete")
+        progress.update(task_id, completed=total_segments, total=total_segments, refresh=True)
+        # Force refresh for async context
+        progress.refresh()
+
+    if not result:
+        raise ValueError("No translation result was received")
+    return result
+
+
+def translate_with_openai_sync(
+    transcript: list[TranscriptionSegment],
+    source_language: LanguageCode | None,
+    target_language: LanguageCode,
+    model: OpenAIModel,
+    progress: Progress,
+    task_id: TaskID,
+) -> TranslationResponse:
+    """Translate a transcript using OpenAI API with structured response (synchronous version).
+
+    This is a synchronous wrapper around translate_with_openai_stream that handles running the
+    async function in the current event loop.
+    """
+
+    # Run the async function in the event loop
+    return asyncio.run(
+        translate_with_openai_stream(
+            transcript=transcript,
+            source_language=source_language,
+            target_language=target_language,
+            model=model,
+            progress=progress,
+            task_id=task_id,
+        )
+    )
 
 
 def translate_with_openai(
@@ -335,17 +432,22 @@ def translate_segments(
     if translation_provider == TranslationProvider.DEEPL:
         if deepl_token:
             try:
+                logger.info("Attempting to initialize DeepL translator")
                 translator = deepl.Translator(deepl_token)
                 use_deepl = True
+                logger.info("Successfully initialized DeepL translator")
                 progress.update(task_id, description="Translating segments using DeepL...")
             except Exception as e:
                 print(f"Warning: Failed to initialize DeepL ({e!s}), falling back to OpenAI")
+                logger.warning(f"Failed to initialize DeepL: {e}, falling back to OpenAI")
                 # Fall back to OpenAI
                 translator = openai_model
                 use_deepl = False
                 progress.update(task_id, description="Translating segments using OpenAI...")
         else:
-            print("Warning: DeepL selected but DEEPL_API_TOKEN not set, falling back to OpenAI")
+            print("Warning: DeepL API token not found, falling back to OpenAI")
+            logger.warning("DeepL API token not found, falling back to OpenAI")
+            # Fall back to OpenAI
             translator = openai_model
             use_deepl = False
             progress.update(task_id, description="Translating segments using OpenAI...")
@@ -354,22 +456,19 @@ def translate_segments(
         use_deepl = False
         progress.update(task_id, description="Translating segments using OpenAI...")
 
-    # Load segments from transcript file
+    # Load transcript segments
     segments = load_transcript(input_file)
-
-    # Deduplicate segments based on normalized hanzi
-    segments = deduplicate_segments(segments)
-
     total_segments = len(segments)
-    progress.update(task_id, total=total_segments)
+    # Reset progress with proper total and completed=0
+    progress.update(task_id, total=total_segments, completed=0)
 
+    # Translate segments
     enriched_segments: list[TranscriptionSegment] = []
     total_success = 0
 
     if use_deepl:
-        # Use ThreadPoolExecutor for parallel processing for DeepL
         with ThreadPoolExecutor(max_workers=4) as executor:
-            future_to_segment = {
+            future_to_seg = {
                 executor.submit(
                     translate_single_segment,
                     segment,
@@ -381,28 +480,31 @@ def translate_segments(
                 ): segment
                 for segment in segments
             }
-
-            for future in as_completed(future_to_segment):
-                translated_segment, reading_segment, success = future.result()
-                original_segment = future_to_segment[future]
+            for future in as_completed(future_to_seg):
+                translated_seg, reading_segment, success = future.result()
                 enriched = TranscriptionSegment(
-                    start=original_segment.start,
-                    end=original_segment.end,
-                    text=original_segment.text,  # Original transcription
-                    translation=translated_segment.text,  # Translation
+                    start=translated_seg.start,
+                    end=translated_seg.end,
+                    text=translated_seg.text,
+                    translation=translated_seg.translation,
                     pronunciation=reading_segment.text if reading_segment else None,  # Pronunciation
                 )
                 enriched_segments.append(enriched)
                 if success:
                     total_success += 1
-                progress.update(task_id, advance=1)
+                current_completed = total_success
+                logger.info(f"DeepL progress update: Completed {current_completed} of {total_segments} items")
+                progress.update(task_id, completed=current_completed, refresh=True)
+                progress.refresh()
     else:
-        # Use OpenAI: batch all segments at once
-        response = translate_with_openai(
+        # Use OpenAI: batch all segments at once using the sync wrapper
+        response = translate_with_openai_sync(
             segments,
             source_language,
             target_language,
             openai_model,
+            progress,
+            task_id,
         )
         for seg, item in zip(segments, response.items, strict=False):
             enriched = TranscriptionSegment(
@@ -414,8 +516,14 @@ def translate_segments(
             )
             enriched_segments.append(enriched)
             total_success += 1
-            progress.update(task_id, advance=1)
 
     # Save all data to a single JSON file
     save_transcript(enriched_segments, output_file)
-    progress.update(task_id, description=f"Translation complete ({total_success}/{total_segments} successful)")
+    # Update progress to 100% complete with the success message
+    progress.update(
+        task_id,
+        completed=total_segments,
+        total=total_segments,
+        description=f"Translation complete ({total_success}/{total_segments} successful)",
+        refresh=True,
+    )

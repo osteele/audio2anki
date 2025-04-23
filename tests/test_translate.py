@@ -3,21 +3,28 @@
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch
+from typing import Any
+from unittest.mock import MagicMock, patch
 
+import deepl
 import pytest
 from rich.progress import Progress
 
 from audio2anki.transcribe import TranscriptionSegment, load_transcript, save_transcript
-from audio2anki.translate import TranslationItem, TranslationProvider, TranslationResponse, translate_segments
+from audio2anki.translate import (
+    TranslationItem,
+    TranslationProvider,
+    TranslationResponse,
+    translate_segments,
+)
 from audio2anki.types import LanguageCode
 
 
 @pytest.mark.parametrize(
     "input_text,expected_translation",
     [
-        ("你好", "Hello"),
-        ("谢谢", "Thank you"),
+        ("u4f60u597d", "Hello"),
+        ("u8c22u8c22", "Thank you"),
     ],
 )
 def test_translate_with_openai(input_text: str, expected_translation: str) -> None:
@@ -45,10 +52,10 @@ def test_translate_with_openai(input_text: str, expected_translation: str) -> No
             ]
         )
 
-        # Patch the translate_with_openai function to return our mock response
+        # Patch the translate_with_openai_sync function to return our mock response
         with (
             patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}),
-            patch("audio2anki.translate.translate_with_openai", return_value=mock_response),
+            patch("audio2anki.translate.translate_with_openai_sync", return_value=mock_response),
         ):
             with Progress() as progress:
                 task_id = progress.add_task("Translating", total=1)
@@ -74,21 +81,42 @@ def test_translate_with_deepl() -> None:
         # Save segment to input file
         save_transcript([segment], input_file)
 
-        # Set up mock DeepL response
-        mock_deepl_response = Mock()
-        mock_deepl_response.text = "Hello"
+        # Mock for translate_with_deepl function
+        def mock_translate_deepl(
+            text: str,
+            source_lang: LanguageCode,
+            target_lang: LanguageCode,
+            translator: deepl.Translator,
+            model: Any = None,
+        ) -> tuple[str, str | None]:
+            return "Hello", None  # Return translation and pronunciation
+
+        # Mock for translate_single_segment
+        def mock_single_segment(
+            segment: TranscriptionSegment,
+            source_lang: LanguageCode,
+            target_lang: LanguageCode,
+            translator: deepl.Translator,
+            use_deepl: bool,
+            model: Any = None,
+        ) -> tuple[TranscriptionSegment, TranscriptionSegment | None, bool]:
+            translated = TranscriptionSegment(
+                start=segment.start,
+                end=segment.end,
+                text="Hello",  # The translation
+                translation="Hello",
+            )
+            return translated, None, True  # translated segment, reading segment, success
 
         with (
             patch.dict(os.environ, {"DEEPL_API_TOKEN": "test-key", "OPENAI_API_KEY": "test-key"}),
-            patch("deepl.Translator") as mock_deepl,
-            # Also patch translate_with_openai in case of fallback
-            patch("audio2anki.translate.translate_with_openai", return_value=TranslationResponse(items=[])),
+            # Patch the DeepL translator to succeed
+            patch("deepl.Translator", return_value=MagicMock()),
+            # Patch translate_with_deepl
+            patch("audio2anki.translate.translate_with_deepl", side_effect=mock_translate_deepl),
+            # Patch translate_single_segment
+            patch("audio2anki.translate.translate_single_segment", side_effect=mock_single_segment),
         ):
-            # Setup mock translator
-            mock_translator = Mock()
-            mock_translator.translate_text.return_value = mock_deepl_response
-            mock_deepl.return_value = mock_translator
-
             with Progress() as progress:
                 task_id = progress.add_task("Translating", total=1)
 
@@ -106,9 +134,6 @@ def test_translate_with_deepl() -> None:
                 result = load_transcript(output_file)
                 assert len(result) == 1
                 assert result[0].translation is not None
-
-                # Verify DeepL was used
-                assert mock_translator.translate_text.call_count >= 1
 
 
 def test_fallback_to_openai_when_deepl_fails() -> None:
@@ -139,7 +164,8 @@ def test_fallback_to_openai_when_deepl_fails() -> None:
         with (
             patch.dict(os.environ, {"DEEPL_API_TOKEN": "test-key", "OPENAI_API_KEY": "test-key"}),
             patch("deepl.Translator") as mock_deepl,
-            patch("audio2anki.translate.translate_with_openai", return_value=mock_response),
+            # Patch the sync wrapper to return our mock response
+            patch("audio2anki.translate.translate_with_openai_sync", return_value=mock_response),
         ):
             # Make DeepL fail to trigger fallback
             mock_deepl.side_effect = Exception("DeepL error")

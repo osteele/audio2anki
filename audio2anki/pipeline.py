@@ -955,6 +955,7 @@ def translate(context: PipelineContext, select_sentences: Path) -> None:
     """Translate transcribed text to target language."""
     from .translate import translate_segments
 
+    # Use the synchronous wrapper which internally handles the async execution
     translate_segments(
         input_file=select_sentences,
         output_file=context.get_artifact_path(),
