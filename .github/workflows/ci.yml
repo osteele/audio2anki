@@ -2,13 +2,14 @@ name: CI
 
 on:
   push:
-    branches: [main, tests]
+    branches: [main, tests, release]
   pull_request:
-    branches: [main]
+    branches: [main, release]
   workflow_dispatch:
 
 jobs:
-  lint-and-test:
+  test-ubuntu:
+    name: Test on Ubuntu (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -21,11 +22,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-
-      - name: Install just
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to $HOME/.local/bin
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Install uv
         run: |
@@ -42,12 +38,53 @@ jobs:
 
       - name: Lint
         run: |
-          just lint
+          uv run --dev ruff check audio2anki tests
 
       - name: Type check
         run: |
-          just typecheck
+          uv run --dev pyright audio2anki tests
 
       - name: Test
         run: |
-          just test
+          uv run --dev python -m pytest tests/
+
+  test-multi-os:
+    name: Test on ${{ matrix.os }} (Python ${{ matrix.python-version }})
+    if: github.ref == 'refs/heads/release'
+    strategy:
+      fail-fast: false # Don't cancel all jobs if one OS fails
+      matrix:
+        python-version: ["3.11", "3.12"]
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v1
+
+      - name: Install ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install ffmpeg
+
+      - name: Install ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install ffmpeg
+
+      - name: Install dependencies
+        run: |
+          uv sync --frozen
+
+      # Linting/Type checking skipped on multi-os, covered by ubuntu job
+
+      - name: Test
+        run: |
+          uv run --dev python -m pytest tests/
