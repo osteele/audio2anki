@@ -2,7 +2,7 @@
 
 All notable changes to audio2anki will be documented in this file.
 
-## [Unreleased]
+## [0.2.0] - 2025-04-24
 
 ### Added
 - Improved audio segment extraction with padding and silence detection
