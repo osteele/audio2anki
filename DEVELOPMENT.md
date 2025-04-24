@@ -96,3 +96,63 @@ Available pipeline stages:
 - `voice_isolation`: Voice isolation (if enabled)
 - `transcribe`: Speech-to-text transcription
 - `translate`: Text translation
+
+## Testing
+
+The project includes comprehensive test coverage using pytest. To run tests:
+
+```bash
+just test
+```
+
+### Testing with Mock Services
+
+The test suite uses mock implementations of the external API services (OpenAI and ElevenLabs) to avoid making real API calls during testing. This has several benefits:
+
+1. Tests run faster without network calls
+2. Tests don't incur API usage costs
+3. Tests are more reliable and deterministic
+4. No API keys are required to run tests
+
+The mock service system works as follows:
+
+- **Service Interfaces**: Abstract base classes for `TranscriptionService`, `TranslationService`, and `VoiceIsolationService`
+- **Mock Implementations**: Mock implementations of these services with configurable responses
+- **Service Provider**: A central provider that returns either real or mock services based on configuration
+- **Test Data**: JSON files with predefined mock responses for common test cases
+
+To run tests with mock services:
+
+```bash
+# Tests use mock services by default, but this can be explicitly set
+AUDIO2ANKI_TEST_MODE=true just test
+```
+
+To add new mock responses for testing:
+
+1. Edit `tests/data/mock_responses.json` to add new transcriptions, translations, or readings
+2. Or programmatically add responses in test fixtures:
+
+```python
+def test_custom_transcription(mock_transcription_service):
+    mock_transcription_service.add_response(
+        "test.mp3",
+        [
+            {"start": 0.0, "end": 1.0, "text": "Custom test text"},
+        ],
+    )
+    # Test with this custom response
+```
+
+## Pre-commit Hooks
+
+This project uses [pre-commit](https://pre-commit.com/) to run code formatting before each commit.
+The hooks will automatically run formatting tools to ensure code quality.
+
+To install the pre-commit hooks:
+
+```bash
+uv run --dev pre-commit install
+```
+
+After installation, the hooks will run automatically on each commit.
