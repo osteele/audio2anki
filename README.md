@@ -34,8 +34,16 @@ Learning Resources](https://osteele.com/topics/language-learning/).
 
 ## Requirements
 
-- Python 3.10 or later
-- OpenAI API key (set as `OPENAI_API_KEY` environment variable) or DeepL API token (set as `DEEPL_API_TOKEN` environment variable)
+- Python 3.11 or 3.12
+- [ffmpeg](https://ffmpeg.org/download.html) installed and available in your system's PATH
+- OpenAI API key (set as `OPENAI_API_KEY` environment variable) 
+
+Optional requirements:
+
+- DeepL API token (set as `DEEPL_API_TOKEN` environment variable). If this is set, DeepL will be used for translation.
+  OpenAI will still be used for Chinese and Japanese pronunciation.
+- ElevenLabs API token (set as `ELEVENLABS_API_TOKEN` environment variable). If this is, the `--voice-isolation` can be
+  used for short (less than an hour) audio files.
 
 ## Installation
 
@@ -234,13 +242,13 @@ uv tool add2anki deck.csv --tags audio2anki
 
 See the deck README.md for more details.
 
-## Usage Tracking
+## API Usage Reporting
 
-`audio2anki` tracks your API usage for each model, including:
+`audio2anki` reports on per-run API usage for each model, including:
 - Number of API calls
 - Input and output tokens
-- Character cost (for ElevenLabs and DeepL)
-- **Minutes of audio processed**
+- Character cost (for DeepL)
+- **Minutes of audio processed** (for Whisper)
 
 After processing, a usage report table is displayed. Only columns with nonzero values are shown for clarity.
 
@@ -258,77 +266,10 @@ OpenAI Usage Report
 
 This helps you monitor your API consumption and costs across different services.
 
-## Development
+## Limitations
 
-### Testing
-
-The project includes comprehensive test coverage using pytest. To run tests:
-
-```bash
-just test
-```
-
-#### Testing with Mock Services
-
-The test suite uses mock implementations of the external API services (OpenAI and ElevenLabs) to avoid making real API calls during testing. This has several benefits:
-
-1. Tests run faster without network calls
-2. Tests don't incur API usage costs
-3. Tests are more reliable and deterministic
-4. No API keys are required to run tests
-
-The mock service system works as follows:
-
-- **Service Interfaces**: Abstract base classes for `TranscriptionService`, `TranslationService`, and `VoiceIsolationService`
-- **Mock Implementations**: Mock implementations of these services with configurable responses
-- **Service Provider**: A central provider that returns either real or mock services based on configuration
-- **Test Data**: JSON files with predefined mock responses for common test cases
-
-To run tests with mock services:
-
-```bash
-# Tests use mock services by default, but this can be explicitly set
-AUDIO2ANKI_TEST_MODE=true just test
-```
-
-To add new mock responses for testing:
-
-1. Edit `tests/data/mock_responses.json` to add new transcriptions, translations, or readings
-2. Or programmatically add responses in test fixtures:
-
-```python
-def test_custom_transcription(mock_transcription_service):
-    mock_transcription_service.add_response(
-        "test.mp3",
-        [
-            {"start": 0.0, "end": 1.0, "text": "Custom test text"},
-        ],
-    )
-    # Test with this custom response
-```
-
-### Development Environment Setup
-
-This project uses `uv` for environment management and `just` for running tasks. To set up a development environment:
-
-```bash
-# Clone the repository
-git clone https://github.com/osteele/audio2anki.git
-cd audio2anki
-
-# Install dependencies
-uv venv
-uv pip install -e ".[dev]"
-
-# Basic development commands
-just check  # Run linting and type checking
-just test   # Run tests
-```
-
-## Related Projects
-
-- [add2anki](https://github.com/osteele/add2anki) - Convert vocabulary lists to Anki flashcard decks
+- **Voice Isolation:** The voice isolation feature provided by Eleven Labs is limited to audio files that are less than 500MB after transcoding and less than 1 hour in duration. Processing files larger than this may result in an error indicating that Eleven Labs did not return any results.
 
 ## License
 
-MIT License 2024 Oliver Steele
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
