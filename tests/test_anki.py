@@ -73,7 +73,7 @@ def test_create_anki_deck(segments: list[AudioSegment], tmp_path: Path) -> None:
     assert (deck_dir / "README.md").exists()
 
     # Check deck.txt content
-    with open(deck_dir / "deck.txt") as f:
+    with open(deck_dir / "deck.txt", encoding="utf-8") as f:
         content = f.read().splitlines()
         assert len(content) == 5  # Two headers + column names + 2 segments
         assert content[0] == "#separator:tab"
@@ -83,7 +83,7 @@ def test_create_anki_deck(segments: list[AudioSegment], tmp_path: Path) -> None:
         assert content[4] == "谢谢\tXièxie\tThank you\t[sound:audio_0002.mp3]"
 
     # Check README.md exists and has content
-    with open(deck_dir / "README.md") as f:
+    with open(deck_dir / "README.md", encoding="utf-8") as f:
         readme = f.read()
         assert "Anki Deck Import Instructions" in readme
         assert "media folder" in readme
@@ -105,7 +105,7 @@ def test_create_anki_deck_missing_fields(tmp_path: Path) -> None:
     deck_dir = create_anki_deck(segments, output_dir)
 
     # Check deck.txt content
-    with open(deck_dir / "deck.txt") as f:
+    with open(deck_dir / "deck.txt", encoding="utf-8") as f:
         content = f.read().splitlines()
         assert len(content) == 4  # Two headers + column names + 1 segment
         assert content[0] == "#separator:tab"
@@ -143,17 +143,17 @@ def test_generate_anki_deck(
     """Test deck processing in pipeline."""
     # Create test files
     transcript_file = tmp_path / "transcript.srt"
-    with open(transcript_file, "w") as f:
+    with open(transcript_file, "w", encoding="utf-8") as f:
         f.write("1\n00:00:00,000 --> 00:00:02,000\n你好\n\n")
         f.write("2\n00:00:02,000 --> 00:00:04,000\n谢谢\n")
 
     translation_file = tmp_path / "translation.srt"
-    with open(translation_file, "w") as f:
+    with open(translation_file, "w", encoding="utf-8") as f:
         f.write("1\n00:00:00,000 --> 00:00:02,000\nHello\n\n")
         f.write("2\n00:00:02,000 --> 00:00:04,000\nThank you\n")
 
     pronunciation_file = tmp_path / "pronunciation.srt"
-    with open(pronunciation_file, "w") as f:
+    with open(pronunciation_file, "w", encoding="utf-8") as f:
         f.write("1\n00:00:00,000 --> 00:00:02,000\nNǐ hǎo\n\n")
         f.write("2\n00:00:02,000 --> 00:00:04,000\nXièxie\n")
 
@@ -195,7 +195,7 @@ def test_generate_anki_deck(
         assert (deck_dir / "media").exists()
 
         # Check deck.txt content
-        with open(deck_dir / "deck.txt") as f:
+        with open(deck_dir / "deck.txt", encoding="utf-8") as f:
             content = f.read().splitlines()
             assert len(content) == 5  # Two headers + columns + 2 segments
             assert content[0] == "#separator:tab"
@@ -229,11 +229,11 @@ def test_generate_anki_deck_with_output_folder(
 
     # Create test files
     transcript_file = tmp_path / "transcript.srt"
-    with open(transcript_file, "w") as f:
+    with open(transcript_file, "w", encoding="utf-8") as f:
         f.write("1\n00:00:00,000 --> 00:00:02,000\n你好\n\n")
 
     translation_file = tmp_path / "translation.srt"
-    with open(translation_file, "w") as f:
+    with open(translation_file, "w", encoding="utf-8") as f:
         f.write("1\n00:00:00,000 --> 00:00:02,000\nHello\n\n")
 
     # Create test audio file
@@ -348,7 +348,7 @@ def test_generate_anki_deck_with_output_folder(
         assert replaced_deck_dir.exists()
 
         # Verify content was replaced
-        with open(replaced_deck_dir / "deck.txt") as f:
+        with open(replaced_deck_dir / "deck.txt", encoding="utf-8") as f:
             content = f.read()
             assert "你好" in content  # New content
     finally:

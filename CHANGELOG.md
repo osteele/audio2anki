@@ -28,6 +28,10 @@ All notable changes to audio2anki will be documented in this file.
 
 ### Fixed
 - Persistent cache keys now use artifact basenames (which include content hashes) instead of full temp file paths, ensuring cache hits across runs regardless of temp directory changes.
+- Fixed Windows compatibility issues:
+  - Added UTF-8 encoding for all file operations to prevent UnicodeEncodeError/UnicodeDecodeError with non-ASCII characters
+  - Improved temporary file handling in transcoder.py to prevent PermissionError when files are locked by another process
+  - Updated test files to use proper UTF-8 encoding for cross-platform compatibility
 
 ## [0.1.2] - 2025-04-08
 

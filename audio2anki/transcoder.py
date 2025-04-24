@@ -1,9 +1,11 @@
 """Audio transcoding module using pydub."""
 
 import logging
+import os
 import shutil
 import tempfile
 from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, Literal, TypeAlias, TypedDict
 
@@ -91,8 +93,12 @@ def transcode_audio(
         update_progress(60)
 
         # Export to a temporary file first
-        with tempfile.NamedTemporaryFile(suffix=f".{target_format}", delete=False) as temp_file:
-            temp_path = Path(temp_file.name)
+        # This is needed to prevent file locks on Windows
+        fd, temp_path = tempfile.mkstemp(suffix=f".{target_format}")
+        try:
+            # Close the file descriptor immediately
+            os.close(fd)
+            temp_path = Path(temp_path)
 
             # Export the processed audio
             logger.debug(f"Exporting processed audio to temporary file: {temp_path}")
@@ -110,6 +116,12 @@ def transcode_audio(
             shutil.move(temp_path, output_path)
 
             update_progress(100)
+        except Exception as e:
+            # Clean up the temporary file if something went wrong
+            if Path(temp_path).exists():
+                with suppress(Exception):
+                    Path(temp_path).unlink()
+            raise e
 
     except Exception as e:
         logger.error(f"Error transcoding audio file: {e}")

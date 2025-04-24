@@ -110,7 +110,7 @@ def create_default_config() -> None:
     config_path = get_config_path()
     if not config_path.exists():
         ensure_config_dir()
-        with open(config_path, "w") as f:
+        with open(config_path, "w", encoding="utf-8") as f:
             # Write a commented example configuration
             f.write("# Audio-to-Anki Configuration\n\n")
             f.write("# Whether to clean up intermediate files\n")

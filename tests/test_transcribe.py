@@ -189,3 +189,23 @@ def test_transcribe_with_length_filters(
         loaded_segments = load_transcript(transcript_path)
         assert len(loaded_segments) == 1
         assert loaded_segments[0].text == "Good length"
+
+
+def test_load_srt_transcript(tmp_path: Path) -> None:
+    """Test loading SRT transcript."""
+    transcript_file = tmp_path / "transcript.srt"
+
+    # Create test files
+    with open(transcript_file, "w", encoding="utf-8") as f:
+        f.write("1\n00:00:00,000 --> 00:00:02,000\nHello\n\n")
+        f.write("2\n00:00:02,000 --> 00:00:04,000\nworld\n")
+
+    # Test loading from SRT
+    segments = load_transcript(transcript_file)
+    assert len(segments) == 2
+    assert segments[0].text == "Hello"
+    assert segments[1].text == "world"
+    assert segments[0].start == 0.0
+    assert segments[0].end == 2.0
+    assert segments[1].start == 2.0
+    assert segments[1].end == 4.0
