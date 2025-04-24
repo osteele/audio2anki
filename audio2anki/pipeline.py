@@ -23,11 +23,12 @@ from rich.progress import (
 
 from . import artifact_cache
 from .artifact_cache import try_hard_link
-from .models import PipelineResult
+from .models import AudioSegment, PipelineResult
 from .transcoder import TRANSCODING_FORMAT, get_transcode_hash
 from .transcribe import get_transcription_hash
 from .translate import TranslationProvider, get_translation_hash
 from .types import LanguageCode
+from .usage_tracker import UsageTracker, current_tracker
 from .voice_isolation import VOICE_ISOLATION_FORMAT, get_voice_isolation_version
 
 logger = logging.getLogger(__name__)
@@ -823,7 +824,14 @@ class PipelineRunner:
         return result
 
 
-def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -> PipelineResult:
+@dataclass
+class PipelineRunResult:
+    deck_dir: Path
+    segments: list[AudioSegment]
+    usage_tracker: UsageTracker
+
+
+def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -> PipelineRunResult:
     """Run the audio processing pipeline.
 
     Returns:
@@ -839,6 +847,9 @@ def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -
     # This will create the persistent cache dir and DB if not present
     artifact_cache.get_artifact_cache()
     # --- End persistent cache initialization ---
+
+    usage_tracker = UsageTracker()
+    token = current_tracker.set(usage_tracker)
 
     # Clean up old artifacts in the persistent cache if enabled
     if options.use_artifact_cache and not options.skip_cache_cleanup:
@@ -884,8 +895,10 @@ def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -
 
             # Run the pipeline
             result = runner.run()
-            return result
+            return PipelineRunResult(deck_dir=result.deck_dir, segments=result.segments, usage_tracker=usage_tracker)
     finally:
+        current_tracker.reset(token)
+
         cache_dir = cache.get_cache().temp_dir
 
         # In debug mode, preserve files and log location
@@ -964,6 +977,7 @@ def translate(context: PipelineContext, select_sentences: Path) -> None:
         progress=context.progress.progress,
         source_language=context.source_language,
         translation_provider=context.translation_provider,
+        usage_tracker=UsageTracker(),
     )
 
 

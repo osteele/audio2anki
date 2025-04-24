@@ -11,6 +11,8 @@ import httpx
 import librosa
 import soundfile as sf
 
+from audio2anki.usage_tracker import record_api_usage
+
 from .exceptions import Audio2AnkiError
 
 logger = logging.getLogger(__name__)
@@ -131,6 +133,11 @@ def _call_elevenlabs_api(input_path: Path, progress_callback: Callable[[float], 
                                 update_progress(30 + (total_chunks % 20))
                         temp_file.flush()
                         os.fsync(temp_file.fileno())
+                        character_cost = response.headers.get("Character-Cost")
+                        record_api_usage(
+                            model="ElevenLabs",
+                            character_cost=int(character_cost or 0),
+                        )
         if total_chunks == 0:
             api_response = None
             with contextlib.suppress(Exception):

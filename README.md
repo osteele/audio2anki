@@ -234,6 +234,30 @@ uv tool add2anki deck.csv --tags audio2anki
 
 See the deck README.md for more details.
 
+## Usage Tracking
+
+`audio2anki` tracks your API usage for each model, including:
+- Number of API calls
+- Input and output tokens
+- Character cost (for ElevenLabs and DeepL)
+- **Minutes of audio processed**
+
+After processing, a usage report table is displayed. Only columns with nonzero values are shown for clarity.
+
+Example usage report:
+
+```
+OpenAI Usage Report
+┏━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Model      ┃ Calls ┃ Input Tokens ┃ Minutes       ┃ Character Cost ┃
+┡━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ gpt-3.5    │ 12    │ 3456         │ 10.25         │            │
+│ ElevenLabs │ 3     │              │ 2.50          │ 1200       │
+└────────────┴───────┴──────────────┴───────────────┴──────────┘
+```
+
+This helps you monitor your API consumption and costs across different services.
+
 ## Development
 
 ### Testing

@@ -23,6 +23,8 @@ All notable changes to audio2anki will be documented in this file.
   - The deck's `import_to_anki.sh` script is now smarter: it checks for `add2anki` at version >=0.1.2 and uses it if available, falling back to `uv` otherwise. If `add2anki` is present but too old, it prints an upgrade message. This logic was moved from the README to the script itself.
   - Updated README with import instructions, version check, and upgrade/fallback guidance.
   - Updated deck README.md to reference add2anki and uv options.
+- Usage tracking records the number of minutes of audio processed for each API/model, in addition to tokens and
+  character cost.
 
 ### Fixed
 - Persistent cache keys now use artifact basenames (which include content hashes) instead of full temp file paths, ensuring cache hits across runs regardless of temp directory changes.

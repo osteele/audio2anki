@@ -12,6 +12,7 @@ from openai import OpenAI
 from rich.progress import Progress, TaskID
 
 from .types import LanguageCode
+from .usage_tracker import record_api_usage
 from .utils import create_params_hash
 
 # Module logger
@@ -272,6 +273,16 @@ def transcribe_audio(
         raise RuntimeError(f"Transcription failed: {e.response.status_code} {e.response.reason_phrase}") from e
     except Exception as e:
         raise RuntimeError(f"Transcription failed: {e!s}") from e
+
+    logger.debug(f"Transcription response: {response}")
+    # Track API usage: compute minutes from audio_utils
+    from .audio_utils import get_audio_duration_minutes  # type: ignore[import]
+
+    minutes = get_audio_duration_minutes(audio_file)
+    record_api_usage(
+        model=model,
+        minutes=minutes,
+    )
 
     # Process segments
     segments: list[TranscriptionSegment] = []

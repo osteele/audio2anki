@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 import pytest
 from openai import AuthenticationError, OpenAI
 from openai.types.audio import Transcription
+from pydub import AudioSegment
 
 from audio2anki.transcribe import TranscriptionSegment, load_transcript, save_transcript, transcribe_audio
 from audio2anki.types import LanguageCode
@@ -45,9 +46,10 @@ def test_transcribe_audio(
     mock_whisper_response: Mock,
 ) -> None:
     """Test audio transcription with OpenAI API."""
-    # Create dummy audio file
+    # Create a minimal valid audio file (1 second of silence)
     audio_file = tmp_path / "test.mp3"
-    audio_file.touch()
+    silence = AudioSegment.silent(duration=1000)  # 1 second
+    silence.export(audio_file, format="mp3")
 
     # Create output file path
     transcript_path = tmp_path / "transcript.srt"

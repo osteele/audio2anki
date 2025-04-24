@@ -74,6 +74,16 @@ def is_voice_active(audio_segment: PydubSegment, threshold: int = -40) -> bool:
     return False
 
 
+def get_audio_duration_minutes(audio_file: Path) -> float:
+    """Return the duration of an audio file in minutes using pydub, which is always available. Returns 0.0 if the file
+    is empty or unreadable."""
+    try:
+        audio = PydubSegment.from_file(str(audio_file))
+        return len(audio) / 60000.0
+    except Exception:
+        return 0.0
+
+
 def split_audio(
     input_file: Path,
     segments: list[AudioSegment],

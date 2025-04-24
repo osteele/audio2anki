@@ -26,13 +26,19 @@ from audio2anki.types import LanguageCode
 class MockResponse:
     """Mock HTTP response for testing."""
 
-    def __init__(self, status_code: int = 200, audio_data: bytes | None = None, text: str = "API error message"):
+    def __init__(
+        self,
+        status_code: int = 200,
+        audio_data: bytes | None = None,
+        text: str = "API error message",
+        headers: dict[str, str] | None = None,
+    ):
         self.status_code = status_code
         # Create a short audio file for testing if no custom audio data is provided
         self._audio_data = audio_data if audio_data is not None else self._create_test_audio()
         # Add these to make it compatible with httpx.Response
         self.request = MagicMock()
-        self.headers = {}
+        self.headers = headers or {"Character-Cost": "0"}
         self.content = self._audio_data
         self.text = text
 

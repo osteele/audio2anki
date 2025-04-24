@@ -261,6 +261,10 @@ def process(
     result = run_pipeline(Path(input_file), console, options)
     deck_dir = str(result.deck_dir)
 
+    if result.usage_tracker:
+        console.print("")
+        result.usage_tracker.render_usage_table(console)
+
     # Display deck summary
     display_deck_summary(result.segments, console)
 
