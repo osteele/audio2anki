@@ -8,7 +8,6 @@ from collections.abc import Callable
 from pathlib import Path
 
 import httpx
-import librosa
 import soundfile as sf
 
 from audio2anki.usage_tracker import record_api_usage
@@ -217,10 +216,10 @@ def _match_audio_properties(
         raise FileNotFoundError(f"Source audio file not found: {source_path}")
 
     # Load the source file (vocals)
-    y, sr = librosa.load(str(source_path), sr=None)
+    y, sr = sf.read(str(source_path), dtype='float32')
 
-    # Save to target path using the source sample rate (cast to int for soundfile)
-    sf.write(target_path, y, int(sr))
+    # Save to target path using the source sample rate
+    sf.write(target_path, y, sr)
 
     if progress_callback:
         progress_callback(100)
