@@ -14,13 +14,13 @@ import pytest
 import soundfile as sf
 from rich.progress import Progress, TaskID
 
+from audio2anki.language_types import LanguageCode
 from audio2anki.pipeline import (
     PipelineContext,
     PipelineProgress,
     create_artifact_spec,
     pipeline_function,
 )
-from audio2anki.types import LanguageCode
 
 
 class MockResponse:

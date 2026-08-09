@@ -12,6 +12,7 @@ from tests.conftest import CacheTestEnv
 
 from audio2anki.config import (
     CONFIG_FILE,
+    DEFAULT_CONFIG,
     Config,
     create_default_config,
     ensure_config_dir,
@@ -127,6 +128,24 @@ def test_load_config_invalid_file(temp_config_dir: Path) -> None:
     assert config.max_artifact_cache_size_mb == 2000
     assert config.audio_padding_ms == 200
     assert config.silence_thresh == -40
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        'cache_expiry_days = "fourteen"',
+        "cache_expiry_days = 0",
+        'voice_isolation_provider = "unknown"',
+    ],
+)
+def test_load_config_rejects_invalid_values(temp_config_dir: Path, content: str) -> None:
+    """Invalid value types and constraints cause the complete file to fall back to defaults."""
+    config_path = temp_config_dir / CONFIG_FILE
+    config_path.write_text(content)
+
+    config = load_config()
+
+    assert config == Config.from_dict(DEFAULT_CONFIG)
 
 
 def test_config_validation_valid() -> None:

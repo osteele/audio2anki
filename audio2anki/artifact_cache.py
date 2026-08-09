@@ -104,56 +104,31 @@ class ArtifactCache:
             # If 'key' column doesn't exist but 'version' does, we need to migrate
             if "key" not in columns and "version" in columns:
                 logger.info("Migrating database schema: adding 'key' column")
-                try:
-                    # Create a new table with the updated schema
-                    cursor.execute("""
-                        CREATE TABLE artifacts_new (
-                            artifact_id TEXT PRIMARY KEY,
-                            artifact_name TEXT NOT NULL,
-                            key TEXT NOT NULL,
-                            input_hash TEXT NOT NULL,
-                            file_path TEXT NOT NULL,
-                            created_at REAL NOT NULL,
-                            last_accessed_at REAL NOT NULL
-                        )
-                    """)
-
-                    # Copy data from old table to new table, using version as key
-                    cursor.execute("""
-                        INSERT INTO artifacts_new
-                        SELECT artifact_id, artifact_name, version, input_hash, file_path, created_at, last_accessed_at
-                        FROM artifacts
-                    """)
-
-                    # Drop the old table and rename the new one
-                    cursor.execute("DROP TABLE artifacts")
-                    cursor.execute("ALTER TABLE artifacts_new RENAME TO artifacts")
-
-                    # Recreate the index
-                    cursor.execute(
-                        "CREATE INDEX IF NOT EXISTS idx_name_hash_key ON artifacts (artifact_name, input_hash, key)"
+                # Create a new table and migrate transactionally. SQLite errors surface
+                # without deleting the existing cache metadata.
+                cursor.execute("""
+                    CREATE TABLE artifacts_new (
+                        artifact_id TEXT PRIMARY KEY,
+                        artifact_name TEXT NOT NULL,
+                        key TEXT NOT NULL,
+                        input_hash TEXT NOT NULL,
+                        file_path TEXT NOT NULL,
+                        created_at REAL NOT NULL,
+                        last_accessed_at REAL NOT NULL
                     )
-
-                    conn.commit()
-                    logger.info("Database schema migration completed successfully")
-                except Exception as e:
-                    logger.error(f"Error during database migration: {e}")
-                    # If migration fails, we'll recreate the database from scratch
-                    cursor.execute("DROP TABLE IF EXISTS artifacts")
-                    cursor.execute("DROP TABLE IF EXISTS artifacts_new")
-                    cursor.execute("""
-                        CREATE TABLE artifacts (
-                            artifact_id TEXT PRIMARY KEY,
-                            artifact_name TEXT NOT NULL,
-                            key TEXT NOT NULL,
-                            input_hash TEXT NOT NULL,
-                            file_path TEXT NOT NULL,
-                            created_at REAL NOT NULL,
-                            last_accessed_at REAL NOT NULL
-                        )
-                    """)
-                    conn.commit()
-                    logger.info("Created new database schema after migration failure")
+                """)
+                cursor.execute("""
+                    INSERT INTO artifacts_new
+                    SELECT artifact_id, artifact_name, version, input_hash, file_path, created_at, last_accessed_at
+                    FROM artifacts
+                """)
+                cursor.execute("DROP TABLE artifacts")
+                cursor.execute("ALTER TABLE artifacts_new RENAME TO artifacts")
+                cursor.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_name_hash_key ON artifacts (artifact_name, input_hash, key)"
+                )
+                conn.commit()
+                logger.info("Database schema migration completed successfully")
 
             # Also update the index if needed
             if "key" in columns and "version" not in columns:
@@ -185,7 +160,7 @@ class ArtifactCache:
                         file_hash = self._hash_file(v)
                         logger.debug(f"Hashed file {v} to {file_hash[:8]}...")
                         serializable_inputs[k] = {"type": "file", "hash": file_hash, "path": str(v)}
-                    except Exception as e:
+                    except OSError as e:
                         logger.warning(f"Could not hash file {v}: {e}")
                         serializable_inputs[k] = {"type": "path", "value": str(v)}
                 else:
@@ -242,7 +217,7 @@ class ArtifactCache:
 
         try:
             inputs_json = json.dumps({k: str(v) for k, v in inputs.items()}, sort_keys=True)
-        except Exception:
+        except (TypeError, ValueError):
             inputs_json = str(inputs)
         logger.debug(
             f"[LOOKUP] artifact_id={artifact_id}, inputs={inputs_json}, input_hash={input_hash}, "
@@ -308,7 +283,7 @@ class ArtifactCache:
 
         try:
             inputs_json = json.dumps({k: str(v) for k, v in inputs.items()}, sort_keys=True)
-        except Exception:
+        except (TypeError, ValueError):
             inputs_json = str(inputs)
         logger.debug(
             f"[STORE] artifact_id={artifact_id}, inputs={inputs_json}, input_hash={input_hash}, key={key}, "
@@ -353,7 +328,7 @@ class ArtifactCache:
                 logger.debug(f"Copying file from {data_path} to {dest_path}")
                 shutil.copy2(data_path, dest_path)
                 logger.debug(f"Stored artifact at {dest_path} using copy")
-            except Exception as e:
+            except OSError as e:
                 logger.error(f"Failed to copy artifact to cache: {e}")
                 raise
 
@@ -409,7 +384,7 @@ class ArtifactCache:
                     file_path.unlink()
                     files_removed += 1
                     bytes_freed += file_size
-                except Exception as e:
+                except OSError as e:
                     logger.warning(f"Failed to delete cache file {file_path}: {e}")
 
         return files_removed, bytes_freed
@@ -444,7 +419,7 @@ class ArtifactCache:
                         file_path_obj.unlink()
                         files_removed += 1
                         bytes_freed += file_size
-                    except Exception as e:
+                    except OSError as e:
                         logger.warning(f"Failed to delete old cache file {file_path}: {e}")
 
                 # Delete the record even if file deletion failed

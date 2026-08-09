@@ -9,8 +9,8 @@ from typing import cast
 
 from contextual_langdetect import detect_language, get_majority_language
 
+from .language_types import LanguageCode
 from .transcribe import TranscriptionSegment
-from .types import LanguageCode
 
 logger = logging.getLogger(__name__)
 
@@ -60,23 +60,24 @@ def filter_segments(
             source_language = cast(LanguageCode, str(majority_lang))
 
     logger.debug(f"Source language: {source_language}")
+
+    def is_duplicate(text: str) -> bool:
+        return text in seen
+
+    def has_wrong_language(text: str) -> bool:
+        if source_language is None:
+            return False
+        lang = detect_language(text)
+        return lang is not None and lang.language != source_language
+
+    tests = [is_empty_or_punctuation, is_one_word, ends_with_comma, is_duplicate, has_wrong_language]
     for seg in segments:
         text = seg.text.strip()
         logger.debug(f"Processing segment: {text}")
 
-        def is_duplicate(text: str) -> bool:
-            return text in seen
-
-        def test_language(text: str) -> bool:
-            if source_language is not None:
-                lang = detect_language(text)
-                return lang is not None and lang.language != source_language
-            return False
-
-        tests = [is_empty_or_punctuation, is_one_word, ends_with_comma, is_duplicate, test_language]
-        if any(test(text) for test in tests):
-            if logger.level <= logging.DEBUG:
-                rejected_reason = next((t.__name__ for t in tests if t(text)), None)
+        rejected_reason = next((test.__name__ for test in tests if test(text)), None)
+        if rejected_reason is not None:
+            if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(f"Rejected segment: {text} ({rejected_reason})")
             continue
         seen.add(text)

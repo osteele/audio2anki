@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 from pydub import AudioSegment as PydubSegment
+from pydub.exceptions import CouldntDecodeError
 from pydub.silence import detect_nonsilent
 from rich.progress import Progress, TaskID
 
@@ -80,7 +81,7 @@ def get_audio_duration_minutes(audio_file: Path) -> float:
     try:
         audio = PydubSegment.from_file(str(audio_file))
         return len(audio) / 60000.0
-    except Exception:
+    except (CouldntDecodeError, OSError):
         return 0.0
 
 

@@ -3,13 +3,14 @@
 import locale
 import logging
 import shutil
+import sqlite3
 import subprocess
 from pathlib import Path
 from typing import Any
 
 import click
 from packaging.specifiers import SpecifierSet
-from packaging.version import Version
+from packaging.version import InvalidVersion, Version
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.table import Table
@@ -17,9 +18,9 @@ from rich.text import Text
 
 from .anki import display_deck_summary
 from .config import edit_config, load_config, reset_config, set_config_value
+from .language_types import LanguageCode
 from .pipeline import PipelineOptions, run_pipeline
 from .translate import TranslationProvider
-from .types import LanguageCode
 from .utils import is_deck_folder, is_empty_directory
 
 # Setup basic logging configuration
@@ -63,7 +64,7 @@ def get_system_language() -> str:
         # Extract primary language code (e.g., "en" from "en_US")
         primary_code = lang_code.split("_")[0].lower()
         return primary_code
-    except Exception:
+    except (TypeError, ValueError):
         return "en"
 
 
@@ -106,7 +107,7 @@ def optional_language_name_to_code(language_name: str | None) -> "LanguageCode |
     Returns:
         LanguageCode | None: The corresponding LanguageCode or None if not found or input is None.
     """
-    from .types import LanguageCode
+    from .language_types import LanguageCode
 
     if language_name is None:
         return None
@@ -286,7 +287,7 @@ def process(
             try:
                 result = subprocess.run(["add2anki", "--version"], capture_output=True, text=True)
                 ver = Version(result.stdout.strip())
-            except Exception:
+            except (InvalidVersion, OSError):
                 ver = None
             if ver and ver in spec:
                 console.print(f"[green]Import directly:[/] add2anki {deck_dir}/deck.csv --tags audio2anki")
@@ -381,7 +382,7 @@ def clear():
                 console.print(f"[green]Freed up {format_size(bytes_freed)} of disk space.[/]")
             else:
                 console.print("[yellow]No files were removed from the cache.[/]")
-        except Exception as e:
+        except (OSError, sqlite3.Error) as e:
             console.print(f"[red]Error clearing cache: {e}[/]")
 
 
@@ -398,7 +399,7 @@ def cleanup(days: int):
             console.print(f"[green]Freed up {format_size(bytes_freed)} of disk space.[/]")
         else:
             console.print(f"[yellow]No files older than {days} days were found in the cache.[/]")
-    except Exception as e:
+    except (OSError, sqlite3.Error) as e:
         console.print(f"[red]Error cleaning up cache: {e}[/]")
 
 
@@ -428,7 +429,7 @@ def cache_info():
                 table.add_row(name, str(count))
 
             console.print(table)
-    except Exception as e:
+    except (OSError, sqlite3.Error) as e:
         console.print(f"[red]Error getting cache information: {e}[/]")
 
 

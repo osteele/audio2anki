@@ -109,7 +109,7 @@ class TempDirCache(Cache):
             try:
                 shutil.rmtree(self.temp_dir)
                 logger.debug(f"Removed temporary cache directory: {self.temp_dir}")
-            except Exception as e:
+            except OSError as e:
                 logger.error(f"Failed to clean up temporary directory: {e}")
 
 

@@ -140,7 +140,7 @@ def _call_elevenlabs_api(input_path: Path, progress_callback: Callable[[float], 
                         )
         if total_chunks == 0:
             api_response = None
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(httpx.ResponseNotRead):
                 api_response = getattr(response, "text", None)
             raise VoiceIsolationError(
                 "No audio data received from API",

@@ -236,7 +236,7 @@ def create_anki_deck(
         shutil.copy2(script_path, target_script_path)
         # Make the script executable
         os.chmod(target_script_path, 0o755)
-    except Exception as e:
+    except OSError as e:
         print(f"Warning: Could not copy import_to_anki.sh script: {e}")
 
     # Create README.md from template
@@ -260,7 +260,7 @@ def create_anki_deck(
         if media_link.exists():
             media_link.unlink()
         media_link.symlink_to(anki_media_dir, target_is_directory=True)
-    except Exception as e:
+    except OSError as e:
         print(f"Warning: Could not create symbolic link to Anki media folder: {e}")
 
     # Copy media files to Anki media directory
@@ -268,7 +268,7 @@ def create_anki_deck(
         for file in media_dir.glob("*.mp3"):
             try:
                 shutil.copy2(file, anki_media_dir)
-            except Exception as e:
+            except OSError as e:
                 print(f"Warning: Could not copy {file.name} to Anki media folder: {e}")
 
     return deck_dir

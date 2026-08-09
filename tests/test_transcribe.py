@@ -10,8 +10,8 @@ from openai import AuthenticationError, OpenAI
 from openai.types.audio import Transcription
 from pydub import AudioSegment
 
+from audio2anki.language_types import LanguageCode
 from audio2anki.transcribe import TranscriptionSegment, load_transcript, save_transcript, transcribe_audio
-from audio2anki.types import LanguageCode
 
 # Configure logging for tests
 logging.basicConfig(level=logging.DEBUG)

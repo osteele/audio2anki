@@ -1,8 +1,9 @@
+import logging
 from unittest.mock import patch
 
+from audio2anki.language_types import LanguageCode
 from audio2anki.select_sentences import filter_segments, is_one_word
 from audio2anki.transcribe import TranscriptionSegment
-from audio2anki.types import LanguageCode
 
 
 # Mock class for DetectionResult
@@ -57,6 +58,21 @@ def test_language_filter():
         result = filter_segments(segs, source_language=LanguageCode("en"))
     assert any("Hello" in s.text for s in result)
     assert all("Bonjour" not in s.text for s in result)
+
+
+def test_language_detection_runs_once_per_eligible_segment(caplog):
+    segs = make_segments(["Hello world", "Bonjour le monde"])
+
+    def fake_detect(text: str):
+        return MockDetectionResult("en" if "Hello" in text else "fr")
+
+    with (
+        caplog.at_level(logging.DEBUG, logger="audio2anki.select_sentences"),
+        patch("audio2anki.select_sentences.detect_language", side_effect=fake_detect) as detect,
+    ):
+        filter_segments(segs, source_language=LanguageCode("en"))
+
+    assert detect.call_count == 2
 
 
 def test_majority_language_detection():

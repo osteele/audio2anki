@@ -67,7 +67,7 @@ jobs:
             - admonition
           nav:
             - Home: 'index.md'
-            - Command Line: 'command-line.md'
+            - Command Line: 'cli.md'
             - Development: 'development.md'
           EOF
 
@@ -78,7 +78,7 @@ jobs:
           cp DEVELOPMENT.md docs/development.md
 
           # Fix internal links to work with mkdocs
-          sed -i 's/\[Command Line Reference\](docs\/command-line.md)/\[Command Line Reference\](command-line.md)/g' docs/index.md
+          sed -i 's#\./docs/cli.md#cli.md#g' docs/index.md
           sed -i 's/\[Development Guide\](DEVELOPMENT.md)/\[Development Guide\](development.md)/g' docs/index.md
 
       - name: Build with MkDocs

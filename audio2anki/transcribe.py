@@ -8,10 +8,10 @@ from pathlib import Path
 from typing import TypedDict
 
 import httpx
-from openai import OpenAI
+from openai import OpenAI, OpenAIError
 from rich.progress import Progress, TaskID
 
-from .types import LanguageCode
+from .language_types import LanguageCode
 from .usage_tracker import record_api_usage
 from .utils import create_params_hash
 
@@ -82,7 +82,7 @@ def parse_srt(file: Path) -> list[TranscriptionSegment]:
 
                 start = ts_to_seconds(start_str.strip())
                 end = ts_to_seconds(end_str.strip())
-            except Exception:
+            except ValueError:
                 continue
             text = " ".join(lines[2:]).strip()
             segments.append(TranscriptionSegment(start=start, end=end, text=text))
@@ -271,12 +271,12 @@ def transcribe_audio(
             )
     except httpx.HTTPStatusError as e:
         raise RuntimeError(f"Transcription failed: {e.response.status_code} {e.response.reason_phrase}") from e
-    except Exception as e:
+    except OpenAIError as e:
         raise RuntimeError(f"Transcription failed: {e!s}") from e
 
     logger.debug(f"Transcription response: {response}")
     # Track API usage: compute minutes from audio_utils
-    from .audio_utils import get_audio_duration_minutes  # type: ignore[import]
+    from .audio_utils import get_audio_duration_minutes
 
     minutes = get_audio_duration_minutes(audio_file)
     record_api_usage(

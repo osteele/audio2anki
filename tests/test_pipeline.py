@@ -1,6 +1,7 @@
 """Tests for the pipeline module."""
 
-from io import StringIO
+import hashlib
+from io import BytesIO, StringIO
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -8,6 +9,7 @@ import pytest
 from rich.console import Console
 from rich.progress import Progress, TaskID
 
+from audio2anki.language_types import LanguageCode
 from audio2anki.models import PipelineResult
 from audio2anki.pipeline import (
     PipelineContext,
@@ -20,7 +22,6 @@ from audio2anki.pipeline import (
     run_pipeline,
     validate_pipeline,
 )
-from audio2anki.types import LanguageCode
 
 
 # Create a pipeline-compatible version of generate_deck just for testing
@@ -236,6 +237,33 @@ def test_pipeline_runner_should_use_cache(pipeline_runner: PipelineRunner) -> No
     pipeline_runner.options.bypass_cache_stages = ["normal_func"]
     assert pipeline_runner.should_use_cache(normal_func) is False
     assert pipeline_runner.should_use_cache(terminal_func) is False
+
+
+def test_compute_output_cache_key_reads_inputs_in_chunks(pipeline_runner: PipelineRunner) -> None:
+    """Cache hashing must not read a complete media file into memory at once."""
+    payload = b"a" * 200_000
+
+    class TrackingReader(BytesIO):
+        read_sizes: list[int | None]
+
+        def __init__(self, value: bytes) -> None:
+            super().__init__(value)
+            self.read_sizes = []
+
+        def read(self, size: int | None = -1, /) -> bytes:
+            self.read_sizes.append(size)
+            return super().read(size)
+
+    reader = TrackingReader(payload)
+    with patch("audio2anki.pipeline.open", return_value=reader, create=True):
+        key = pipeline_runner.compute_output_cache_key(
+            {"extension": "bin", "cache": True},
+            {"input": Path("large-input.bin")},
+        )
+
+    assert key == hashlib.md5(payload).hexdigest()
+    assert reader.read_sizes
+    assert set(reader.read_sizes) == {65536}
 
 
 def test_pipeline_runner_get_cached_artifacts(pipeline_runner: PipelineRunner, tmp_path: Path) -> None:

@@ -5,6 +5,7 @@ import inspect
 import logging
 import shutil
 import signal
+import sqlite3
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -23,11 +24,11 @@ from rich.progress import (
 
 from . import artifact_cache
 from .artifact_cache import try_hard_link
+from .language_types import LanguageCode
 from .models import AudioSegment, PipelineResult
 from .transcoder import TRANSCODING_FORMAT, get_transcode_hash
 from .transcribe import get_transcription_hash
 from .translate import TranslationProvider, get_translation_hash
-from .types import LanguageCode
 from .usage_tracker import UsageTracker, current_tracker
 from .voice_isolation import VOICE_ISOLATION_FORMAT, get_voice_isolation_version
 
@@ -39,6 +40,7 @@ T = TypeVar("T")
 def callable_name(func: Callable[..., Any]) -> str:
     """Return a useful name for a function or another callable object."""
     return getattr(func, "__name__", type(func).__name__)
+
 
 # Type definitions for pipeline artifacts
 HashType = int | str | Callable[..., int | str]
@@ -620,7 +622,7 @@ class PipelineRunner:
             logger.debug(f"Copying file from {source_path} to {dest_path} using regular copy")
             shutil.copy2(source_path, dest_path)
             return dest_path
-        except Exception as e:
+        except OSError as e:
             error_msg = f"Failed to copy artifact from persistent cache to temporary cache: {e}"
             logger.error(error_msg)
             console = Console(stderr=True)
@@ -720,11 +722,12 @@ class PipelineRunner:
         """
         content_hash = hashlib.md5()
         for name, v in sorted(inputs.items()):
+            file_hash = hashlib.md5()
             with open(v, "rb") as f:
-                data = f.read()
-                md5 = hashlib.md5(data).hexdigest()
-                logger.debug(f"Input file for {name}: {v} md5={md5}")
-                content_hash.update(data)
+                for chunk in iter(lambda: f.read(65536), b""):
+                    file_hash.update(chunk)
+                    content_hash.update(chunk)
+            logger.debug(f"Input file for {name}: {v} md5={file_hash.hexdigest()}")
         version = artifact_def.get("version")
         if version is not None:
             content_hash.update(str(version).encode())
@@ -802,7 +805,7 @@ class PipelineRunner:
                         artifact_name, cache_key, input_basenames, artifact_path, extension
                     )
                     logger.debug(f" Stored '{artifact_name}' in persistent cache (hash {cache_key}) at {stored_path}")
-                except Exception as e:
+                except (OSError, sqlite3.Error) as e:
                     error_msg = f" Failed to store '{artifact_name}' in persistent cache: {e}"
                     logger.error(error_msg)
                     console = Console(stderr=True)
@@ -873,7 +876,7 @@ def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -
             if files_removed > 0:
                 readable_size = format_bytes(bytes_freed)
                 logger.info(f"Evicted {files_removed} artifacts from cache ({readable_size})")
-        except Exception as e:
+        except (OSError, sqlite3.Error) as e:
             logger.warning(f"Error cleaning up old cache artifacts: {e}")
 
     # Initialize a new temporary cache for this run (for intermediate files only)
@@ -891,7 +894,7 @@ def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -
                 if signum is not None:
                     # If this was called from a signal handler, exit the program
                     signal_sys.exit(1)
-            except Exception as e:
+            except OSError as e:
                 logger.warning(f"Error cleaning up cache: {e}")
 
     # Register signal handlers and atexit hook for cleanup
@@ -925,7 +928,7 @@ def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -
             logger.debug("Cleaning up cache directory")
             try:
                 cache.cleanup_cache()
-            except Exception as e:
+            except OSError as e:
                 # Log cleanup errors but don't raise - we're in finally block
                 logger.warning(f"Error cleaning up cache: {e}")
 

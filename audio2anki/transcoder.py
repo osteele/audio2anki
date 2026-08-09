@@ -73,56 +73,39 @@ def transcode_audio(
         if progress_callback:
             progress_callback(percent)
 
+    logger.debug(f"Loading audio file: {input_path}")
+    update_progress(10)
+
+    audio = AudioSegment.from_file(str(input_path))
+    update_progress(30)
+
+    if audio.channels != target_channels:
+        audio = audio.set_channels(target_channels)
+        update_progress(40)
+
+    if audio.frame_rate != target_sample_rate:
+        audio = audio.set_frame_rate(target_sample_rate)
+        update_progress(50)
+
+    update_progress(60)
+
+    # Export to a temporary file first to prevent file locks on Windows.
+    fd, temp_path_str = tempfile.mkstemp(suffix=f".{target_format}")
+    os.close(fd)
+    temp_path = Path(temp_path_str)
     try:
-        # Load the audio file
-        logger.debug(f"Loading audio file: {input_path}")
-        update_progress(10)
+        logger.debug(f"Exporting processed audio to temporary file: {temp_path}")
+        export_params: dict[str, Any] = {
+            "format": target_format,
+            "parameters": ["-b:a", target_bitrate],
+        }
+        if target_format == "mp3":
+            export_params["id3v2_version"] = "3"
+        audio.export(str(temp_path), **export_params)
 
-        audio = AudioSegment.from_file(str(input_path))
-        update_progress(30)
-
-        # Apply audio transformations
-        if audio.channels != target_channels:
-            audio = audio.set_channels(target_channels)
-            update_progress(40)
-
-        if audio.frame_rate != target_sample_rate:
-            audio = audio.set_frame_rate(target_sample_rate)
-            update_progress(50)
-
-        update_progress(60)
-
-        # Export to a temporary file first
-        # This is needed to prevent file locks on Windows
-        fd, temp_path = tempfile.mkstemp(suffix=f".{target_format}")
-        try:
-            # Close the file descriptor immediately
-            os.close(fd)
-            temp_path = Path(temp_path)
-
-            # Export the processed audio
-            logger.debug(f"Exporting processed audio to temporary file: {temp_path}")
-            export_params: dict[str, Any] = {
-                "format": target_format,
-                "parameters": ["-b:a", target_bitrate],
-            }
-            if target_format == "mp3":
-                export_params["id3v2_version"] = "3"
-            audio.export(str(temp_path), **export_params)
-
-            update_progress(80)
-
-            # Move temporary file to final location
-            shutil.move(temp_path, output_path)
-
-            update_progress(100)
-        except Exception as e:
-            # Clean up the temporary file if something went wrong
-            if Path(temp_path).exists():
-                with suppress(Exception):
-                    Path(temp_path).unlink()
-            raise e
-
-    except Exception as e:
-        logger.error(f"Error transcoding audio file: {e}")
-        raise
+        update_progress(80)
+        shutil.move(temp_path, output_path)
+        update_progress(100)
+    finally:
+        with suppress(OSError):
+            temp_path.unlink()

@@ -6,7 +6,7 @@ import logging
 import math
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Literal, TypedDict, cast
 
@@ -17,15 +17,15 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
 from rich.progress import Progress, TaskID
 
+from .language_types import LanguageCode
 from .transcribe import TranscriptionSegment, load_transcript, save_transcript
-from .types import LanguageCode
 from .usage_tracker import UsageTracker, record_api_usage
 from .utils import create_params_hash
 
 logger = logging.getLogger(__name__)
 
 
-class TranslationProvider(str, Enum):
+class TranslationProvider(StrEnum):
     """Supported translation service providers."""
 
     OPENAI = "openai"
@@ -522,7 +522,7 @@ def translate_segments(
                     progress.refresh()
             enriched_segments = [translated_by_index[index] for index in range(len(segments))]
             # No usage tracking for DeepL for now
-        except Exception as exc:
+        except deepl.DeepLException as exc:
             from audio2anki.exceptions import Audio2AnkiError
 
             raise Audio2AnkiError("DeepL translation failed") from exc

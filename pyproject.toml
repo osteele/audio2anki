@@ -63,8 +63,8 @@ dev = [
 
 [tool.ruff]
 line-length = 120
-target-version = "py39"
-src = ["audio2ank", "tests"]
+target-version = "py311"
+src = ["audio2anki", "tests"]
 lint.select = [
     "E",   # pycodestyle errors
     "F",   # pyflakes

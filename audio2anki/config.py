@@ -3,12 +3,13 @@
 import logging
 import os
 import subprocess
+import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict, cast
 
 import tomli_w
-import tomllib
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,25 @@ ConfigValue = bool | int | str
 def mutable_config(data: ConfigDict) -> dict[str, ConfigValue]:
     """Return a mutable representation that supports runtime-selected keys."""
     return cast(dict[str, ConfigValue], dict(data))
+
+
+def config_from_mapping(data: Mapping[str, object]) -> "Config":
+    """Parse configuration values after checking their runtime types and constraints."""
+    values = mutable_config(DEFAULT_CONFIG)
+    defaults = mutable_config(DEFAULT_CONFIG)
+    for key, default_value in defaults.items():
+        if key not in data:
+            continue
+        value = data[key]
+        if type(value) is not type(default_value):
+            raise ValueError(f"{key} must be a {type(default_value).__name__}")
+        values[key] = cast(ConfigValue, value)
+
+    config = Config.from_dict(cast(ConfigDict, values))
+    errors = validate_config(config)
+    if errors:
+        raise ValueError(", ".join(errors))
+    return config
 
 
 # Default configuration values
@@ -148,8 +168,6 @@ def load_config() -> Config:
         Config: The configuration object with all settings.
     """
     config_path = get_config_path()
-    config_dict = mutable_config(DEFAULT_CONFIG)
-
     if not config_path.exists():
         logger.info(f"Config file not found at {config_path}. Using default configuration.")
         create_default_config()
@@ -157,14 +175,11 @@ def load_config() -> Config:
         try:
             with open(config_path, "rb") as f:
                 file_config = tomllib.load(f)
-                # Update only the keys that exist in our default config
-                for key in DEFAULT_CONFIG:
-                    if key in file_config:
-                        config_dict[key] = file_config[key]
-        except (tomllib.TOMLDecodeError, OSError) as e:
+            return config_from_mapping(file_config)
+        except (tomllib.TOMLDecodeError, OSError, ValueError) as e:
             logger.warning(f"Error reading config file: {e}. Using default configuration.")
 
-    return Config.from_dict(cast(ConfigDict, config_dict))
+    return Config.from_dict(DEFAULT_CONFIG)
 
 
 def validate_config(config: Config) -> list[str]:
@@ -229,7 +244,13 @@ def set_config_value(key: str, value: str) -> tuple[bool, str]:
     converted_value: ConfigValue | None = None
     try:
         if default_type is bool:
-            converted_value = value.lower() in ("true", "1", "yes", "on")
+            normalized = value.lower()
+            if normalized in ("true", "1", "yes", "on"):
+                converted_value = True
+            elif normalized in ("false", "0", "no", "off"):
+                converted_value = False
+            else:
+                raise ValueError
         elif default_type is int:
             converted_value = int(value)
         elif default_type is str:
@@ -255,7 +276,7 @@ def set_config_value(key: str, value: str) -> tuple[bool, str]:
         with open(config_path, "wb") as f:
             tomli_w.dump(config_dict, f)
         return True, f"Successfully set {key} to {converted_value}"
-    except Exception as e:
+    except OSError as e:
         return False, f"Error writing configuration: {e}"
 
 
@@ -274,20 +295,16 @@ def edit_config() -> tuple[bool, str]:
     editor = os.environ.get("EDITOR", "nano")
     try:
         subprocess.run([editor, str(config_path)], check=True)
-
-        # Validate the edited configuration
-        try:
-            config = load_config()
-            errors = validate_config(config)
-            if errors:
-                return False, f"Invalid configuration: {', '.join(errors)}"
-            return True, "Configuration updated successfully"
-        except Exception as e:
-            return False, f"Error in configuration file: {e}"
     except subprocess.CalledProcessError:
         return False, "Editor exited with an error"
-    except Exception as e:
+    except OSError as e:
         return False, f"Error opening editor: {e}"
+
+    config = load_config()
+    errors = validate_config(config)
+    if errors:
+        return False, f"Invalid configuration: {', '.join(errors)}"
+    return True, "Configuration updated successfully"
 
 
 def reset_config() -> tuple[bool, str]:
@@ -302,5 +319,5 @@ def reset_config() -> tuple[bool, str]:
             config_path.unlink()
         create_default_config()
         return True, "Configuration reset to defaults"
-    except Exception as e:
+    except OSError as e:
         return False, f"Error resetting configuration: {e}"

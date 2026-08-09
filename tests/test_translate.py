@@ -10,6 +10,7 @@ import pytest
 from rich.progress import Progress
 
 from audio2anki.exceptions import Audio2AnkiError
+from audio2anki.language_types import LanguageCode
 from audio2anki.transcribe import TranscriptionSegment, load_transcript, save_transcript
 from audio2anki.translate import (
     TranslationItem,
@@ -19,7 +20,6 @@ from audio2anki.translate import (
     merge_openai_response,
     translate_segments,
 )
-from audio2anki.types import LanguageCode
 
 
 @pytest.mark.parametrize(
@@ -174,7 +174,7 @@ def test_deepl_failure_raises_error(tmp_path: Path) -> None:
         patch("deepl.Translator") as mock_deepl,
         patch("audio2anki.translate.translate_with_openai_sync"),
     ):
-        mock_deepl.side_effect = Exception("DeepL error")
+        mock_deepl.side_effect = deepl.DeepLException("DeepL error")
         with Progress() as progress:
             task_id = progress.add_task("Translating", total=1)
             with pytest.raises(Audio2AnkiError):
