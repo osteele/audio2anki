@@ -70,7 +70,7 @@ def filter_segments(
         def test_language(text: str) -> bool:
             if source_language is not None:
                 lang = detect_language(text)
-                return lang and lang.language != source_language
+                return lang is not None and lang.language != source_language
             return False
 
         tests = [is_empty_or_punctuation, is_one_word, ends_with_comma, is_duplicate, test_language]

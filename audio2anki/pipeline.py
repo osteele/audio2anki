@@ -35,6 +35,11 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
+
+def callable_name(func: Callable[..., Any]) -> str:
+    """Return a useful name for a function or another callable object."""
+    return getattr(func, "__name__", type(func).__name__)
+
 # Type definitions for pipeline artifacts
 HashType = int | str | Callable[..., int | str]
 VersionType = int | str
@@ -152,7 +157,7 @@ def resolve_hash(hash_value: HashType, context: "PipelineContext") -> int | str:
                 kwargs[param_name] = getattr(context, param_name)
             else:
                 raise ValueError(
-                    f"Hash function {hash_value.__name__} requires parameter '{param_name}' "
+                    f"Hash function {callable_name(hash_value)} requires parameter '{param_name}' "
                     f"which is not available in the pipeline context"
                 )
 
@@ -202,13 +207,13 @@ def pipeline_function(
         # Case 1: Using simplified form with extension/cache/version/hash
         if extension or cache or version is not None or hash is not None:
             # Use function name as artifact name
-            artifact_name = func.__name__
+            artifact_name = callable_name(func)
             artifact_spec = create_artifact_spec(extension=extension or "mp3", cache=cache, version=version, hash=hash)
             produced_artifacts[artifact_name] = artifact_spec
 
         # Case 2: Handle artifacts list (including empty list or None)
         for artifact_data in artifacts or []:
-            artifact_name = artifact_data.get("name", func.__name__)
+            artifact_name = artifact_data.get("name", callable_name(func))
             # Create a clean artifact definition using our helper
             artifact_spec = create_artifact_spec_from_dict(artifact_data)
             produced_artifacts[artifact_name] = artifact_spec

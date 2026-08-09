@@ -5,7 +5,7 @@ import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypedDict, cast
+from typing import TypedDict, cast
 
 import tomli_w
 import tomllib
@@ -23,6 +23,14 @@ class ConfigDict(TypedDict):
     max_artifact_cache_size_mb: int
     audio_padding_ms: int
     silence_thresh: int
+
+
+ConfigValue = bool | int | str
+
+
+def mutable_config(data: ConfigDict) -> dict[str, ConfigValue]:
+    """Return a mutable representation that supports runtime-selected keys."""
+    return cast(dict[str, ConfigValue], dict(data))
 
 
 # Default configuration values
@@ -140,7 +148,7 @@ def load_config() -> Config:
         Config: The configuration object with all settings.
     """
     config_path = get_config_path()
-    config_dict = DEFAULT_CONFIG.copy()
+    config_dict = mutable_config(DEFAULT_CONFIG)
 
     if not config_path.exists():
         logger.info(f"Config file not found at {config_path}. Using default configuration.")
@@ -156,7 +164,7 @@ def load_config() -> Config:
         except (tomllib.TOMLDecodeError, OSError) as e:
             logger.warning(f"Error reading config file: {e}. Using default configuration.")
 
-    return Config.from_dict(config_dict)
+    return Config.from_dict(cast(ConfigDict, config_dict))
 
 
 def validate_config(config: Config) -> list[str]:
@@ -191,7 +199,7 @@ def validate_config(config: Config) -> list[str]:
 
 
 def get_config_type(key: str) -> type[bool] | type[int] | type[str]:
-    value: Any = cast(Any, DEFAULT_CONFIG[key])
+    value = mutable_config(DEFAULT_CONFIG)[key]
     if isinstance(value, bool):
         return bool
     if isinstance(value, int):
@@ -212,13 +220,13 @@ def set_config_value(key: str, value: str) -> tuple[bool, str]:
         tuple of (success, message)
     """
     config = load_config()
-    config_dict = config.to_dict()
+    config_dict = mutable_config(config.to_dict())
 
     if key not in DEFAULT_CONFIG:
         return False, f"Unknown configuration key: {key}"
 
     default_type = get_config_type(key)
-    converted_value: Any = None
+    converted_value: ConfigValue | None = None
     try:
         if default_type is bool:
             converted_value = value.lower() in ("true", "1", "yes", "on")
@@ -235,7 +243,7 @@ def set_config_value(key: str, value: str) -> tuple[bool, str]:
     config_dict[key] = converted_value
 
     # Validate the new configuration
-    new_config = Config.from_dict(config_dict)
+    new_config = Config.from_dict(cast(ConfigDict, config_dict))
     errors = validate_config(new_config)
     if errors:
         return False, f"Invalid configuration: {', '.join(errors)}"

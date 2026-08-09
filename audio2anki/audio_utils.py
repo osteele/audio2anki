@@ -5,8 +5,8 @@ from math import ceil, floor
 from pathlib import Path
 
 import numpy as np
-from pydub import AudioSegment as PydubSegment  # type: ignore
-from pydub.silence import detect_nonsilent  # type: ignore
+from pydub import AudioSegment as PydubSegment
+from pydub.silence import detect_nonsilent
 from rich.progress import Progress, TaskID
 
 from .models import AudioSegment

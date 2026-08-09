@@ -36,7 +36,7 @@ def test_cache_dir(tmp_path: Path) -> Generator[Path, None, None]:
     """Create a temporary directory for cache and initialize cache to use it."""
     cache_dir = tmp_path / "test_cache"
     cache_dir.mkdir()
-    cache._cache = cache.TempDirCache(keep_files=True)  # type: ignore
+    cache._cache = cache.TempDirCache(keep_files=True)
     yield cache_dir
     cache.cleanup_cache()
 
