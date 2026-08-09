@@ -1,5 +1,6 @@
 """Tests for the pipeline module."""
 
+from io import StringIO
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -399,6 +400,26 @@ def test_pipeline_stages(test_audio_file: Path, tmp_path: Path) -> None:
             mock_transcribe_audio.assert_called_once()
             mock_translate_segments.assert_called_once()
             mock_generate_anki_deck.assert_called_once()
+
+
+def test_run_pipeline_uses_configured_cache_limits(test_audio_file: Path, tmp_path: Path) -> None:
+    options = PipelineOptions(
+        output_folder=tmp_path / "deck",
+        cache_expiry_days=3,
+        max_artifact_cache_size_mb=512,
+    )
+    pipeline_result = PipelineResult(deck_dir=tmp_path / "deck", segments=[])
+
+    with (
+        patch("audio2anki.artifact_cache.get_artifact_cache"),
+        patch("audio2anki.artifact_cache.clean_old_artifacts", return_value=(0, 0)) as clean_old,
+        patch("audio2anki.artifact_cache.enforce_max_size", return_value=(0, 0)) as enforce_size,
+        patch.object(PipelineRunner, "run", return_value=pipeline_result),
+    ):
+        run_pipeline(test_audio_file, Console(file=StringIO()), options)
+
+    clean_old.assert_called_once_with(days=3)
+    enforce_size.assert_called_once_with(512)
 
 
 def test_execute_stage(pipeline_runner: PipelineRunner, tmp_path: Path) -> None:

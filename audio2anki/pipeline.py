@@ -233,6 +233,8 @@ class PipelineOptions:
     translation_provider: TranslationProvider = TranslationProvider.OPENAI
     use_artifact_cache: bool = True
     skip_cache_cleanup: bool = False
+    cache_expiry_days: int = 14
+    max_artifact_cache_size_mb: int = 2000
     bypass_cache_stages: list[str] = field(default_factory=list[str])
 
 
@@ -813,6 +815,10 @@ class PipelineRunner:
 
                 sys.exit(1)
 
+        files_removed, bytes_freed = artifact_cache.enforce_max_size(self.options.max_artifact_cache_size_mb)
+        if files_removed:
+            logger.info(f"Evicted {files_removed} artifacts from cache ({bytes_freed} bytes)")
+
     def run(self) -> PipelineResult:
         """Run the entire pipeline and return the final artifact value from the terminal function."""
         validate_pipeline(self.pipeline, self.artifacts)
@@ -854,10 +860,14 @@ def run_pipeline(input_file: Path, console: Console, options: PipelineOptions) -
     # Clean up old artifacts in the persistent cache if enabled
     if options.use_artifact_cache and not options.skip_cache_cleanup:
         try:
-            files_removed, bytes_freed = artifact_cache.clean_old_artifacts(days=14)
+            files_removed, bytes_freed = artifact_cache.clean_old_artifacts(days=options.cache_expiry_days)
             if files_removed > 0:
                 readable_size = format_bytes(bytes_freed)
                 logger.info(f"Cleaned {files_removed} old artifacts from cache ({readable_size})")
+            files_removed, bytes_freed = artifact_cache.enforce_max_size(options.max_artifact_cache_size_mb)
+            if files_removed > 0:
+                readable_size = format_bytes(bytes_freed)
+                logger.info(f"Evicted {files_removed} artifacts from cache ({readable_size})")
         except Exception as e:
             logger.warning(f"Error cleaning up old cache artifacts: {e}")
 

@@ -15,6 +15,8 @@ from audio2anki.translate import (
     TranslationItem,
     TranslationProvider,
     TranslationResponse,
+    get_openai_batch_prompt,
+    merge_openai_response,
     translate_segments,
 )
 from audio2anki.types import LanguageCode
@@ -81,7 +83,7 @@ def test_translate_with_deepl(tmp_path: Path) -> None:
     # Create temporary files for input and output
     with pytest.MonkeyPatch.context() as mp:
         mp.setenv("DEEPL_API_TOKEN", "test-key")
-        mp.setenv("OPENAI_API_KEY", "test-key")
+        mp.delenv("OPENAI_API_KEY", raising=False)
         input_file = tmp_path / "input.json"
         output_file = tmp_path / "output.json"
 
@@ -98,30 +100,11 @@ def test_translate_with_deepl(tmp_path: Path) -> None:
         ) -> tuple[str, str | None]:
             return "Hello", None  # Return translation and pronunciation
 
-        # Mock for translate_single_segment
-        def mock_single_segment(
-            segment: TranscriptionSegment,
-            source_lang: LanguageCode,
-            target_lang: LanguageCode,
-            translator: deepl.Translator,
-            use_deepl: bool,
-            model: Any = None,
-        ) -> tuple[TranscriptionSegment, TranscriptionSegment | None, bool]:
-            translated = TranscriptionSegment(
-                start=segment.start,
-                end=segment.end,
-                text="Hello",  # The translation
-                translation="Hello",
-            )
-            return translated, None, True  # translated segment, reading segment, success
-
         with (
             # Patch the DeepL translator to succeed
             patch("deepl.Translator", return_value=MagicMock()),
             # Patch translate_with_deepl
             patch("audio2anki.translate.translate_with_deepl", side_effect=mock_translate_deepl),
-            # Patch translate_single_segment
-            patch("audio2anki.translate.translate_single_segment", side_effect=mock_single_segment),
         ):
             with Progress() as progress:
                 task_id = progress.add_task("Translating", total=1)
@@ -140,7 +123,43 @@ def test_translate_with_deepl(tmp_path: Path) -> None:
                 # Load the result and verify
                 result = load_transcript(output_file)
                 assert len(result) == 1
-                assert result[0].translation is not None
+                assert result[0].text == "Bonjour"
+                assert result[0].translation == "Hello"
+
+
+def test_openai_batch_prompt_includes_target_language_and_reading() -> None:
+    prompt = get_openai_batch_prompt(LanguageCode("zh"), LanguageCode("fr"))
+
+    assert "Translate the given text to fr" in prompt
+    assert "Pinyin" in prompt
+    assert "exactly one output item" in prompt
+
+
+def test_merge_openai_response_rejects_missing_items() -> None:
+    segments = [
+        TranscriptionSegment(start=0.0, end=1.0, text="one"),
+        TranscriptionSegment(start=1.0, end=2.0, text="two"),
+    ]
+    response = TranslationResponse(items=[TranslationItem(start=0.0, end=1.0, text="one", translation="uno")])
+
+    with pytest.raises(ValueError, match="Expected 2 translated items, received 1"):
+        merge_openai_response(segments, response)
+
+
+def test_merge_openai_response_rejects_reordered_items() -> None:
+    segments = [
+        TranscriptionSegment(start=0.0, end=1.0, text="one"),
+        TranscriptionSegment(start=1.0, end=2.0, text="two"),
+    ]
+    response = TranslationResponse(
+        items=[
+            TranslationItem(start=1.0, end=2.0, text="two", translation="dos"),
+            TranslationItem(start=0.0, end=1.0, text="one", translation="uno"),
+        ]
+    )
+
+    with pytest.raises(ValueError, match="does not match its source segment"):
+        merge_openai_response(segments, response)
 
 
 def test_deepl_failure_raises_error(tmp_path: Path) -> None:

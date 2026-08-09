@@ -3,9 +3,11 @@
 import os
 import tempfile
 from collections.abc import Generator
+from pathlib import Path
 
 import pytest
 
+from audio2anki.artifact_cache import ArtifactCache
 from audio2anki.cache import TempDirCache, cleanup_cache, get_artifact_path, init_cache, store_artifact
 
 
@@ -113,3 +115,24 @@ def test_global_functions() -> None:
     finally:
         # Clean up
         cleanup_cache()
+
+
+def test_persistent_cache_enforces_lru_size_limit(tmp_path: Path) -> None:
+    cache = ArtifactCache(tmp_path / "persistent")
+    first_source = tmp_path / "first.bin"
+    second_source = tmp_path / "second.bin"
+    first_source.write_bytes(b"a" * 700_000)
+    second_source.write_bytes(b"b" * 700_000)
+
+    first_inputs = {"source": "first"}
+    second_inputs = {"source": "second"}
+    first_cached = cache.store_artifact("first", "v1", first_inputs, first_source, "bin")
+    second_cached = cache.store_artifact("second", "v1", second_inputs, second_source, "bin")
+    cache.get_artifact_path("first", "v1", first_inputs, "bin")
+
+    files_removed, bytes_freed = cache.enforce_max_size(1)
+
+    assert files_removed == 1
+    assert bytes_freed == 700_000
+    assert first_cached.exists()
+    assert not second_cached.exists()

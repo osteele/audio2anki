@@ -3,8 +3,10 @@
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
+from click.testing import CliRunner
 from pytest import MonkeyPatch
 from tests.conftest import CacheTestEnv
 
@@ -17,6 +19,9 @@ from audio2anki.config import (
     load_config,
     validate_config,
 )
+from audio2anki.main import cli
+from audio2anki.pipeline import PipelineOptions, PipelineRunResult
+from audio2anki.usage_tracker import UsageTracker
 
 
 @pytest.fixture
@@ -223,3 +228,38 @@ def test_validate_config(test_env: CacheTestEnv) -> None:
 
     errors = config.validate_config(cfg)
     assert not errors
+
+
+def test_process_uses_persistent_cache_config(tmp_path: Path) -> None:
+    input_file = tmp_path / "input.mp3"
+    input_file.touch()
+    config = Config(
+        clean_files=True,
+        use_cache=True,
+        cache_expiry_days=3,
+        voice_isolation_provider="eleven_labs",
+        transcription_provider="openai_whisper",
+        use_artifact_cache=False,
+        max_artifact_cache_size_mb=512,
+        audio_padding_ms=200,
+        silence_thresh=-40,
+    )
+    pipeline_result = PipelineRunResult(
+        deck_dir=tmp_path / "deck",
+        segments=[],
+        usage_tracker=UsageTracker(),
+    )
+
+    with (
+        patch("audio2anki.main.load_config", return_value=config),
+        patch("audio2anki.main.run_pipeline", return_value=pipeline_result) as run_pipeline,
+        patch("audio2anki.main.display_deck_summary"),
+    ):
+        result = CliRunner().invoke(cli, ["process", str(input_file), "--target-language", "en"])
+
+    assert result.exit_code == 0
+    options = run_pipeline.call_args.args[2]
+    assert isinstance(options, PipelineOptions)
+    assert options.use_artifact_cache is False
+    assert options.cache_expiry_days == 3
+    assert options.max_artifact_cache_size_mb == 512

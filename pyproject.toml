@@ -84,6 +84,7 @@ lint.ignore = ["RUF001", "A002", "SIM117"]
 known-first-party = ["audio2anki"]
 
 [tool.pyright]
+autoSearchPaths = false
 reportIncompatibleMethodOverride = "none"
 reportPrivateUsage = "warning"
 reportUnknownLambdaType = "warning"
@@ -100,7 +101,7 @@ exclude = ["stubs/**/*"]
 reportPrivateImportUsage = "none"
 executionEnvironments = [
     { root = "tests", extraPaths = [
-        "src",
+        ".",
     ], reportPrivateUsage = false, reportMissingImports = false, reportUnknownVariableType = false, reportUnknownParameterType = false },
 ]
 include = ["audio2anki", "tests"]

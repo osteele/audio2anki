@@ -454,6 +454,44 @@ class ArtifactCache:
 
         return files_removed, bytes_freed
 
+    def enforce_max_size(self, max_size_mb: int) -> tuple[int, int]:
+        """Remove least-recently-used artifacts until the cache fits within its size limit."""
+        max_size_bytes = max_size_mb * 1024 * 1024
+
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT artifact_id, file_path FROM artifacts ORDER BY last_accessed_at ASC")
+            artifacts = [(artifact_id, Path(file_path)) for artifact_id, file_path in cursor.fetchall()]
+
+            missing_ids = [artifact_id for artifact_id, file_path in artifacts if not file_path.exists()]
+            cursor.executemany("DELETE FROM artifacts WHERE artifact_id = ?", [(item,) for item in missing_ids])
+
+            existing_artifacts = [
+                (artifact_id, file_path, file_path.stat().st_size)
+                for artifact_id, file_path in artifacts
+                if file_path.exists()
+            ]
+            total_size = sum(size for _, _, size in existing_artifacts)
+            files_removed = 0
+            bytes_freed = 0
+
+            for artifact_id, file_path, file_size in existing_artifacts:
+                if total_size <= max_size_bytes:
+                    break
+                try:
+                    file_path.unlink()
+                except OSError as error:
+                    logger.warning(f"Failed to evict cache file {file_path}: {error}")
+                    continue
+                cursor.execute("DELETE FROM artifacts WHERE artifact_id = ?", (artifact_id,))
+                total_size -= file_size
+                files_removed += 1
+                bytes_freed += file_size
+
+            conn.commit()
+
+        return files_removed, bytes_freed
+
     def get_cache_size(self) -> tuple[int, int]:
         """
         Calculate the total size of cached artifacts.
@@ -606,6 +644,11 @@ def clean_old_artifacts(days: int = 14) -> tuple[int, int]:
         Tuple of (number of files removed, total bytes freed)
     """
     return get_artifact_cache().clean_old_artifacts(days)
+
+
+def enforce_max_size(max_size_mb: int) -> tuple[int, int]:
+    """Evict least-recently-used artifacts until the cache fits within its configured limit."""
+    return get_artifact_cache().enforce_max_size(max_size_mb)
 
 
 def get_cache_stats() -> dict[str, Any]:

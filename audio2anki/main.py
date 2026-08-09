@@ -225,6 +225,7 @@ def process(
 ) -> None:
     """Process an audio/video file and generate Anki flashcards."""
     configure_logging(debug)
+    config = load_config()
 
     if not target_language:
         target_language = get_system_language()
@@ -254,8 +255,10 @@ def process(
         output_folder=resolved_output_path,
         voice_isolation=voice_isolation,
         translation_provider=translation_provider_enum,
-        use_artifact_cache=not no_cache,
+        use_artifact_cache=config.use_artifact_cache and not no_cache,
         skip_cache_cleanup=skip_cache_cleanup,
+        cache_expiry_days=config.cache_expiry_days,
+        max_artifact_cache_size_mb=config.max_artifact_cache_size_mb,
         bypass_cache_stages=bypass_stages,
     )
     result = run_pipeline(Path(input_file), console, options)
