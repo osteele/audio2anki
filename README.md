@@ -5,6 +5,7 @@
 [![License](https://img.shields.io/github/license/osteele/audio2anki.svg)](https://github.com/osteele/audio2anki/blob/main/LICENSE)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![CI](https://github.com/osteele/audio2anki/actions/workflows/ci.yml/badge.svg)](https://github.com/osteele/audio2anki/actions/workflows/ci.yml)
+[![Changelog](https://img.shields.io/badge/changelog-gray.svg)](./CHANGELOG.md)
 
 Convert audio and video files into Anki flashcard decks with translations.
 

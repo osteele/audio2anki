@@ -1,0 +1,2 @@
+Text	Pronunciation	French	Audio
+Test text	Test text	Test text	[sound:audio2anki_eba5f710_001.mp3]
