@@ -56,8 +56,8 @@ dev = [
     "ruff>=0.1.9",
     "pytest>=7.4.4",
     "pydub-stubs>=0.25.1.5",
-    "pyright>=1.1.396",
     "pre-commit>=4.2.0",
+    "ty>=0.0.69",
 ]
 
 [tool.ruff]
@@ -83,27 +83,12 @@ lint.ignore = ["RUF001", "A002", "SIM117"]
 [tool.ruff.lint.isort]
 known-first-party = ["audio2anki"]
 
-[tool.pyright]
-autoSearchPaths = false
-reportIncompatibleMethodOverride = "none"
-reportPrivateUsage = "warning"
-reportUnknownLambdaType = "warning"
-reportUnknownMemberType = "warning"
-reportUnknownParameterType = "warning"
-reportUnknownVariableType = "warning"
-reportMissingParameterType = "warning"
-pythonVersion = "3.11"
-pythonPlatform = "Darwin"
-reportMissingTypeStubs = false
-useLibraryCodeForTypes = true
-stubPath = "stubs"
-exclude = ["stubs/**/*"]
-reportPrivateImportUsage = "none"
-executionEnvironments = [
-    { root = "tests", extraPaths = [
-        ".",
-    ], reportPrivateUsage = false, reportMissingImports = false, reportUnknownVariableType = false, reportUnknownParameterType = false },
-]
+[tool.ty.environment]
+extra-paths = ["stubs"]
+python-version = "3.11"
+root = ["."]
+
+[tool.ty.src]
 include = ["audio2anki", "tests"]
 
 [project.scripts]

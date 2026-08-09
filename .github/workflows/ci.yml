@@ -42,7 +42,7 @@ jobs:
 
       - name: Type check
         run: |
-          uv run --dev pyright audio2anki tests
+          uv run --dev ty check
 
       - name: Test
         run: |

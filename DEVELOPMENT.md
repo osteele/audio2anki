@@ -67,7 +67,7 @@ This will clean build artifacts, build the package, and publish it to PyPI.
 
 The project uses GitHub Actions for continuous integration. The workflow runs:
 - Linting with ruff
-- Type checking with pyright
+- Type checking with ty
 - Tests with pytest
 
 The workflow runs on multiple Python versions (3.10, 3.11, 3.12) to ensure compatibility.

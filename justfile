@@ -33,4 +33,4 @@ test *ARGS:
 
 # Run type checking
 typecheck:
-    uv run --dev pyright audio2anki tests
+    uv run --dev ty check

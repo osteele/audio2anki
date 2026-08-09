@@ -156,12 +156,10 @@ def test_isolate_voice_basic(
     """Test basic voice isolation functionality."""
     from audio2anki.voice_isolation import VoiceIsolationError, isolate_voice
 
-    # pyright: ignore[reportPrivateUsage]
     mock_pipeline_context._current_fn = mock_isolate_voice
     mock_pipeline_context.update_stage_input("mock_isolate_voice", real_test_audio_file)
 
     # Set up the artifacts dictionary
-    # pyright: ignore[reportPrivateUsage]
     mock_pipeline_context._artifacts = {"mock_isolate_voice": create_artifact_spec(extension="mp3")}
 
     # Create output path in the temporary directory
