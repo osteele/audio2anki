@@ -113,7 +113,7 @@ def display_deck_summary(segments: list[AudioSegment], console: Console | None =
 
     segment_list = [(i, seg) for i, seg in enumerate(segments, start=1)]
     if len(segments) >= 12:
-        segment_list = segment_list[:10] + [(None, None)] + segment_list[-2:]
+        segment_list = [*segment_list[:10], (None, None), *segment_list[-2:]]
     max_index_width = len(str(segment_list[-1][0])) if segment_list else 0
     for i, seg in segment_list:
         if seg is None:

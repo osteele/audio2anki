@@ -186,7 +186,7 @@ def test_isolate_voice_basic(
 
         # For status code 400, we expect an error
         if status_code == 400:
-            with pytest.raises(VoiceIsolationError, match="API error message|Voice isolation failed"):
+            with pytest.raises(VoiceIsolationError, match=r"API error message|Voice isolation failed"):
                 with patch.dict(os.environ, {"ELEVENLABS_API_KEY": "test-key"}):
                     isolate_voice(
                         real_test_audio_file,
@@ -348,7 +348,7 @@ def test_isolate_voice_no_api_key(
         # Temporarily remove the API key from environment
         with patch.dict(os.environ, {}, clear=True):  # Clear all env vars for this test
             # Now we expect a ValueError with the specific message about API key
-            with pytest.raises(VoiceIsolationError, match="ELEVENLABS_API_KEY.*not set"):
+            with pytest.raises(VoiceIsolationError, match=r"ELEVENLABS_API_KEY.*not set"):
                 isolate_voice(
                     real_test_audio_file,
                     output_path,

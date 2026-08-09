@@ -12,9 +12,9 @@ from typing import Literal, TypedDict, cast
 
 import contextual_langdetect
 import deepl
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatModel
 from rich.progress import Progress, TaskID
 
 from .transcribe import TranscriptionSegment, load_transcript, save_transcript
@@ -169,27 +169,23 @@ def get_translation_hash(
     return create_params_hash(params)
 
 
-def get_pinyin(text: str, model: OpenAIModel) -> str:
+def get_pinyin(text: str, model: OpenAIChatModel) -> str:
     """Get pinyin for Chinese text."""
     agent = Agent(model=model, system_prompt=TRANSLATION_PROMPTS["pinyin"])
     result = agent.run_sync(text)
-    record_api_usage(
-        OPENAI_MODEL, input_tokens=result.usage().request_tokens, output_tokens=result.usage().response_tokens
-    )
+    record_api_usage(OPENAI_MODEL, input_tokens=result.usage.input_tokens, output_tokens=result.usage.output_tokens)
     return result.output.strip()
 
 
-def get_hiragana(text: str, model: OpenAIModel) -> str:
+def get_hiragana(text: str, model: OpenAIChatModel) -> str:
     """Get hiragana for Japanese text."""
     agent = Agent(model=model, system_prompt=TRANSLATION_PROMPTS["hiragana"])
     result = agent.run_sync(text)
-    record_api_usage(
-        OPENAI_MODEL, input_tokens=result.usage().request_tokens, output_tokens=result.usage().response_tokens
-    )
+    record_api_usage(OPENAI_MODEL, input_tokens=result.usage.input_tokens, output_tokens=result.usage.output_tokens)
     return result.output.strip()
 
 
-def get_reading(text: str, source_language: LanguageCode | None, model: OpenAIModel) -> str | None:
+def get_reading(text: str, source_language: LanguageCode | None, model: OpenAIChatModel) -> str | None:
     """Get reading (pinyin or hiragana) based on source language."""
     if not source_language:
         return None
@@ -204,7 +200,7 @@ async def translate_with_openai_stream(
     transcript: list[TranscriptionSegment],
     source_language: LanguageCode | None,
     target_language: LanguageCode,
-    model: OpenAIModel,
+    model: OpenAIChatModel,
     progress: Progress,
     task_id: TaskID,
 ) -> TranslationResponse:
@@ -228,22 +224,11 @@ async def translate_with_openai_stream(
     progress.update(task_id, completed=0, total=total_segments)
 
     async with agent.run_stream(user_prompt, output_type=TranslationResponse) as stream_result:
-        async for message, is_final_result in stream_result.stream_structured(debounce_by=0.01):
-            try:
-                interim_result = await stream_result.validate_structured_output(
-                    message, allow_partial=not is_final_result
-                )
-                if is_final_result:
-                    result = interim_result
-
-                completed = len(interim_result.items)
-                logger.info(f"Progress update: Completed {completed} of {total_segments} items")
-
-                progress.update(task_id, completed=completed, refresh=True)
-            except ValidationError as err:
-                if is_final_result:
-                    raise
-                logger.debug(f"Validation error {err}\nfor message: {message}")
+        async for interim_result in stream_result.stream_output(debounce_by=0.01):
+            result = interim_result
+            completed = len(interim_result.items)
+            logger.info(f"Progress update: Completed {completed} of {total_segments} items")
+            progress.update(task_id, completed=completed, refresh=True)
 
     # Ensure we mark as fully complete at the end
     if result:
@@ -252,8 +237,8 @@ async def translate_with_openai_stream(
 
     record_api_usage(
         OPENAI_MODEL,
-        input_tokens=stream_result.usage().request_tokens,
-        output_tokens=stream_result.usage().response_tokens,
+        input_tokens=stream_result.usage.input_tokens,
+        output_tokens=stream_result.usage.output_tokens,
     )
 
     if not result:
@@ -265,7 +250,7 @@ def translate_with_openai_sync(
     transcript: list[TranscriptionSegment],
     source_language: LanguageCode | None,
     target_language: LanguageCode,
-    model: OpenAIModel,
+    model: OpenAIChatModel,
     progress: Progress,
     task_id: TaskID,
 ) -> TranslationResponse:
@@ -292,7 +277,7 @@ def translate_with_openai(
     transcript: list[TranscriptionSegment],
     source_language: LanguageCode | None,
     target_language: LanguageCode,
-    model: OpenAIModel,
+    model: OpenAIChatModel,
 ) -> TranslationResponse:
     """Translate a transcript using OpenAI API with structured response."""
     openai_input: list[dict[str, str | float]] = [
@@ -306,9 +291,7 @@ def translate_with_openai(
         user_prompt,
         output_type=TranslationResponse,
     )
-    record_api_usage(
-        OPENAI_MODEL, input_tokens=result.usage().request_tokens, output_tokens=result.usage().response_tokens
-    )
+    record_api_usage(OPENAI_MODEL, input_tokens=result.usage.input_tokens, output_tokens=result.usage.output_tokens)
     return result.output
 
 
@@ -317,7 +300,7 @@ def translate_with_deepl(
     source_language: LanguageCode | None,
     target_language: LanguageCode,
     translator: deepl.Translator,
-    model: OpenAIModel | None = None,
+    model: OpenAIChatModel | None = None,
 ) -> tuple[str, str | None]:
     """Translate text using DeepL API.
 
@@ -359,7 +342,7 @@ def translate_single_segment(
     source_language: LanguageCode | None,
     target_language: LanguageCode,
     translator: deepl.Translator,
-    model: OpenAIModel | None = None,
+    model: OpenAIChatModel | None = None,
 ) -> tuple[TranscriptionSegment, TranscriptionSegment | None, bool]:
     """Translate a single segment to target language."""
     translation, reading = translate_with_deepl(
@@ -486,7 +469,7 @@ def translate_segments(
         raise ValueError("OPENAI_API_KEY environment variable is required for Chinese and Japanese readings")
 
     # Initialize OpenAI only when it is needed for translation or readings.
-    openai_model = OpenAIModel(OPENAI_MODEL) if openai_key else None
+    openai_model = OpenAIChatModel(OPENAI_MODEL) if openai_key else None
 
     segments = load_transcript(input_file)
     total_segments = len(segments)
